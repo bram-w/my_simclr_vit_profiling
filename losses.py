@@ -54,5 +54,4 @@ class SimCLRLoss(nn.Module):
         loss_a = F.cross_entropy(torch.cat([logits_ab, logits_aa], dim=1), self.labels)
         loss_b = F.cross_entropy(torch.cat([logits_ba, logits_bb], dim=1), self.labels)
         loss = (loss_a + loss_b) / 2  # divide by 2 to average over all samples
-        print(local_batch_size, logits_aa.shape, logits_bb.shape, logits_ab.shape, embeddings.shape, q_a.shape, q_b.shape, k_a.shape, k_b.shape)
         return loss
