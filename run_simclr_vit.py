@@ -203,7 +203,7 @@ def train():
                 optimizer.step()
             lr_scheduler.step()
 
-            if (step ) % cfg.log_step_interval == 0:
+            if (step +1 ) % cfg.log_step_interval == 0:
                 lr = optimizer.param_groups[0]["lr"]
                 reduced_loss = reduce_tensor(loss, average=True).item()
                 smoothed_loss.update(reduced_loss, batch_size=target.size(0))
