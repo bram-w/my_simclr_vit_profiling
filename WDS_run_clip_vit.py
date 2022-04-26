@@ -8,7 +8,7 @@ import torch
 import torchvision
 import torchvision.transforms as T
 
-import config
+import clip_config as config
 from losses import SimCLRLoss, CLIPLoss
 from models import SimCLRViTModel
 from distributed import (
@@ -33,7 +33,8 @@ from my_webdataset import DataPipeline, WebLoader
 import slip_models
 from tokenizer import SimpleTokenizer
 
-train_dataset_len = 12811 # 67  # Exactly the size of Imagenet dataset.
+# train_dataset_len = 12811 # 67  # Exactly the size of Imagenet dataset.
+train_dataset_len = 10055143  # Exactly the size of our vesion of CC12M
 try:
     import torch_xla.core.xla_model as xm
     import torch_xla.distributed.xla_multiprocessing as xmp
@@ -226,7 +227,8 @@ def train():
         )
 
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
+        model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
+        betas=(0.9, 0.98)
     )
     iters_per_epoch = train_dataset_len / batch_size
     lr_scheduler = get_warmup_cosine_scheduler(
