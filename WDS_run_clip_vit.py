@@ -33,7 +33,7 @@ from my_webdataset import DataPipeline, WebLoader
 import slip_models
 from tokenizer import SimpleTokenizer
 
-train_dataset_len = 1281167  # Exactly the size of Imagenet dataset.
+train_dataset_len = 12811 # 67  # Exactly the size of Imagenet dataset.
 try:
     import torch_xla.core.xla_model as xm
     import torch_xla.distributed.xla_multiprocessing as xmp
@@ -61,16 +61,23 @@ def load_training_data():
 
     master_print(f"loading images from : {cfg.data_dir}")
     tokenizer = SimpleTokenizer()
-    simclr_transform =     T.Compose(
+    viz_transform =     T.Compose(
                     [
-                        T.RandomResizedCrop(size=224),
-                        T.RandomHorizontalFlip(p=0.5),
-                        ImgPilColorDistortion(strength=0.5),
-                        ImgPilGaussianBlur(p=0.5, radius_min=0.1, radius_max=2.0),
+                        T.RandomResizedCrop(224, scale=(0.5, 1.0)),
                         T.ToTensor(),
                         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                     ]
                         )
+    # simclr_transform =     T.Compose(
+    #                 [
+    #                     T.RandomResizedCrop(size=224),
+    #                     T.RandomHorizontalFlip(p=0.5),
+    #                     ImgPilColorDistortion(strength=0.5),
+    #                     ImgPilGaussianBlur(p=0.5, radius_min=0.1, radius_max=2.0),
+    #                     T.ToTensor(),
+    #                     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    #                 ]
+    #                     )
     ########
     num_dataset_instances = xm.xrt_world_size() * cfg.num_workers
     epoch_size = train_dataset_len // num_dataset_instances
@@ -84,7 +91,7 @@ def load_training_data():
         wds.decode("pil"),
         # we now have a list of decompressed train samples from each shard in this worker, in sequence
         wds.to_tuple("ppm;jpg;jpeg;png", "txt"),
-        wds.map_tuple(simclr_transform, tokenizer),
+        wds.map_tuple(viz_transform, tokenizer),
         wds.batched(local_batch_size)
         ).with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
     train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
@@ -295,6 +302,7 @@ def train():
             else:
                 optimizer.step()
             lr_scheduler.step()
+            model.logit_scale.data.clamp_(0, 4.6052)
 
             if (step+1 ) % cfg.log_step_interval == 0:
                 lr = optimizer.param_groups[0]["lr"]
