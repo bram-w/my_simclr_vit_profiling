@@ -17,8 +17,8 @@ class CLIPLoss(nn.Module):
         local_batch_size = image_embed.size(0)
 
         if local_batch_size != self.last_local_batch_size:
-            self.labels = local_batch_size * utils.get_rank() + torch.arange(
-                local_batch_size, device=image_embed.device
+            self.labels = local_batch_size * get_rank() + torch.arange(
+                local_batch_size, device=embeddings.device
             )
             self.last_local_batch_size = local_batch_size
 
@@ -27,8 +27,10 @@ class CLIPLoss(nn.Module):
         text_embed = F.normalize(text_embed, dim=-1, p=2)
 
         # gather features from all GPUs
-        image_embed_all, text_embed_all = \
-            utils.all_gather_batch([image_embed, text_embed])
+        # image_embed_all, text_embed_all = \
+        #     utils.all_gather_batch([image_embed, text_embed])
+        image_embed_all = gather_tensor_with_backward(image_embed)
+        text_embed_all = gather_tensor_with_backward(text_embed)
 
         # cosine similarity as logits
         logits_per_image = logit_scale * image_embed @ text_embed_all.t()
