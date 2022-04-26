@@ -33,6 +33,7 @@ from my_webdataset import DataPipeline, WebLoader
 import slip_models
 from tokenizer import SimpleTokenizer
 
+train_dataset_len = 1281167  # Exactly the size of Imagenet dataset.
 try:
     import torch_xla.core.xla_model as xm
     import torch_xla.distributed.xla_multiprocessing as xmp
@@ -47,7 +48,6 @@ def identity(x):
 def load_training_data():
     world_size = get_world_size()
     local_batch_size = cfg.batch_size // world_size
-    train_dataset_len = 1281167  # Exactly the size of Imagenet dataset.
     if cfg.fake_data:
         train_loader = xu.SampleGenerator(
             data=(
@@ -221,7 +221,7 @@ def train():
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
     )
-    iters_per_epoch = len(train_dataset) / batch_size
+    iters_per_epoch = train_dataset_len / batch_size
     lr_scheduler = get_warmup_cosine_scheduler(
         optimizer,
         warmup_iteration=int(iters_per_epoch * cfg.warmup_epochs),
@@ -306,6 +306,8 @@ def train():
                     f"loss (avg): {smoothed_loss.avg:.4f}, "
                     f"loss (median): {smoothed_loss.median:.4f}"
                 )
+
+            # add terminatino on steps
 
         time_elapsed = time.time() - time_b
         master_print(f"epoch {epoch} done ({time_elapsed:.2f} sec)")

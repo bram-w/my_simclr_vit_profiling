@@ -307,6 +307,8 @@ def train():
                     f"loss (median): {smoothed_loss.median:.4f}"
                 )
 
+            # add termination on steps
+
         time_elapsed = time.time() - time_b
         master_print(f"epoch {epoch} done ({time_elapsed:.2f} sec)")
 
