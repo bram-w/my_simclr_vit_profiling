@@ -39,6 +39,7 @@ except ImportError:
     xm = xmp = pl = xu = None
 
 tpu_cores_per_node = 8
+train_dataset_len = 1281167  # Exactly the size of Imagenet dataset.
 
 def identity(x):
     return x
@@ -46,7 +47,6 @@ def identity(x):
 def load_training_data():
     world_size = get_world_size()
     local_batch_size = cfg.batch_size // world_size
-    train_dataset_len = 1281167  # Exactly the size of Imagenet dataset.
     if cfg.fake_data:
         train_loader = xu.SampleGenerator(
             data=(
@@ -219,7 +219,7 @@ def train():
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
     )
-    iters_per_epoch = len(train_dataset) / batch_size
+    iters_per_epoch = train_dataset_len / batch_size
     lr_scheduler = get_warmup_cosine_scheduler(
         optimizer,
         warmup_iteration=int(iters_per_epoch * cfg.warmup_epochs),
