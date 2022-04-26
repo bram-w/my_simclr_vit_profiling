@@ -9,11 +9,11 @@ cfg = AttrDict()
 # --------------------------------------------------------------------------- #
 # general options
 # --------------------------------------------------------------------------- #
-cfg.device = "xla"  # "xla" or "cuda"
-cfg.log_step_interval = 50
-cfg.ckpt_epoch_interval = 1
+cfg.device = "cuda"  # "xla" or "cuda"
+cfg.log_step_interval = 100
+cfg.ckpt_epoch_interval = 15
 cfg.ckpt_dir = "./save"  # make sure it can be accessed from all nodes
-cfg.ckpt_prefix = "clip_vit"
+cfg.ckpt_prefix = "simclr_vit"
 
 cfg.resume_training = True
 cfg.resume_ckpt_path = "<auto-resume-latest>"
@@ -24,7 +24,7 @@ cfg.use_pytorch_amp = False
 # data options
 # --------------------------------------------------------------------------- #
 cfg.fake_data = False
-cfg.data_dir = "N/A"
+cfg.data_dir = "/checkpoint/ronghanghu/megavlt_paths/imagenet-1k"
 cfg.drop_last = True
 cfg.num_workers = 4
 
@@ -42,10 +42,10 @@ cfg.simclr_loss_temperature = 0.1
 # training options
 # --------------------------------------------------------------------------- #
 cfg.batch_size = 4096
-cfg.lr = 5e-4
-cfg.weight_decay = 0.5
-cfg.num_epochs = 35
-cfg.warmup_epochs = 1
+cfg.lr = 3.2e-3
+cfg.weight_decay = 0.1
+cfg.num_epochs = 300
+cfg.warmup_epochs = 40
 
 # --------------------------------------------------------------------------- #
 # linear eval options

@@ -8,7 +8,8 @@ import torch
 import torchvision
 import torchvision.transforms as T
 
-import clip_config as config
+# import clip_config as config
+import config
 from losses import SimCLRLoss, CLIPLoss
 from models import SimCLRViTModel
 from distributed import (
