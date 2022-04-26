@@ -57,19 +57,16 @@ def load_training_data():
         return [None] * train_dataset_len, train_loader, train_sampler
 
     master_print(f"loading images from : {cfg.data_dir}")
-    simclr_transform = MultiViewGenerator(
-        T.Compose(
-            [
-                T.RandomResizedCrop(size=224),
-                T.RandomHorizontalFlip(p=0.5),
-                ImgPilColorDistortion(strength=0.5),
-                ImgPilGaussianBlur(p=0.5, radius_min=0.1, radius_max=2.0),
-                T.ToTensor(),
-                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ]
-        ),
-        n_views=2,
-    )
+    simclr_transform =     T.Compose(
+                    [
+                        T.RandomResizedCrop(size=224),
+                        T.RandomHorizontalFlip(p=0.5),
+                        ImgPilColorDistortion(strength=0.5),
+                        ImgPilGaussianBlur(p=0.5, radius_min=0.1, radius_max=2.0),
+                        T.ToTensor(),
+                        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                    ]
+                        )
     ########
     num_dataset_instances = xm.xrt_world_size() * cfg.num_workers
     epoch_size = train_dataset_len // num_dataset_instances
