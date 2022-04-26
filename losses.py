@@ -82,7 +82,7 @@ class MY_UNIFINSHED_CLIPLoss(nn.Module):
         # local_batch_size = embeddings.size(0) // 2
         # embedding_dim = embeddings.size(1)
         local_batch_size = image_embed.size(0)
-        embedding_dim  image_embed.size(1)
+        embedding_dim  = image_embed.size(1)
 
         # embeddings_reshape = embeddings.view(2, local_batch_size, embedding_dim)
         # q_a = embeddings_reshape[0]
