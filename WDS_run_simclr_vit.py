@@ -88,7 +88,7 @@ def load_training_data():
         ).with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
     train_dataset.__len__ = epoch_size
     train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
-            batch_size=None, collate_fn=collate_fn)
+            batch_size=None) # , collate_fn=collate_fn)
     train_loader = train_loader.with_length(epoch_size) # adds `__len__` method to dataloader
     train_sampler = None
     ######### 
@@ -269,6 +269,10 @@ def train():
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
         for step, (data, target) in enumerate(train_loader):
+            master_print(len(data))
+            master_print(len(target))
+            master_print(data[0].shape)
+            sys.exit()
             # forward pass
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler is not None):
