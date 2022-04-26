@@ -296,7 +296,7 @@ def train():
                 optimizer.step()
             lr_scheduler.step()
 
-            if (step + 1) % cfg.log_step_interval == 0:
+            if (step ) % cfg.log_step_interval == 0:
                 lr = optimizer.param_groups[0]["lr"]
                 reduced_loss = reduce_tensor(loss, average=True).item()
                 smoothed_loss.update(reduced_loss, batch_size=target.size(0))
@@ -308,8 +308,8 @@ def train():
                 )
 
             # add termination on steps
-            if step+1 == iters_per_epoch:
-                break
+            # if step+1 == iters_per_epoch:
+            #     break
 
         time_elapsed = time.time() - time_b
         master_print(f"epoch {epoch} done ({time_elapsed:.2f} sec)")
