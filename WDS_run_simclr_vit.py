@@ -81,7 +81,7 @@ def load_training_data():
         wds.shuffle(10000),
         wds.decode("pil"),
         # we now have a list of decompressed train samples from each shard in this worker, in sequence
-        wds.to_tuple("ppm;jpg;jpeg;png", "txt"),
+        wds.to_tuple("ppm;jpg;jpeg;png", "cls"),
         wds.map_tuple(simclr_transform, identity),
         wds.batched(local_batch_size)
         ).with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
