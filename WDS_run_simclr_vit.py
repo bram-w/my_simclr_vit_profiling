@@ -87,7 +87,8 @@ def load_training_data():
         wds.batched(local_batch_size)
         ).with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
     train_dataset.__len__ = epoch_size
-    train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers, batch_size=None)
+    train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
+            batch_size=None, persistent_workers=True, collate_fn=collate_fn)
     train_loader = train_loader.with_length(epoch_size) # adds `__len__` method to dataloader
     train_sampler = None
     ######### 
