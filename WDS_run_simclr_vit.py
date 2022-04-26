@@ -85,7 +85,7 @@ def load_training_data():
         wds.map_tuple(simclr_transform, identity),
         wds.batched(local_batch_size)
         ).with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
-
+    train_dataset.__len__ = epoch_size
     train_loader = wds.WebLoader(train_dataset, num_workers=cfg.num_workers, batch_size=None)
     train_loader = train_loader.with_length(epoch_size) # adds `__len__` method to dataloader
     train_sampler = None
