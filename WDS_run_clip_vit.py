@@ -9,7 +9,7 @@ import torchvision
 import torchvision.transforms as T
 
 import config
-from losses import SimCLRLoss
+from losses import SimCLRLoss, CLIPLoss
 from models import SimCLRViTModel
 from distributed import (
     get_world_size,
@@ -230,7 +230,8 @@ def train():
     scaler = None
     if cfg.use_pytorch_amp:
         scaler = torch.cuda.amp.GradScaler()
-    loss_fn = SimCLRLoss(temperature=cfg.simclr_loss_temperature)
+    # loss_fn = SimCLRLoss(temperature=cfg.simclr_loss_temperature)
+    loss_fn = CLIPLoss()
     if is_master():
         os.makedirs(cfg.ckpt_dir, exist_ok=True)
     master_print("\nmodel:")
