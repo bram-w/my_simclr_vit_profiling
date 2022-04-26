@@ -38,6 +38,8 @@ try:
 except ImportError:
     xm = xmp = pl = xu = None
 
+tpu_cores_per_node = 8
+
 def identity(x):
     return x
 
@@ -68,7 +70,7 @@ def load_training_data():
                     ]
                         )
     ########
-    num_dataset_instances = xm.xrt_world_size() * cfg.num_workers
+    num_dataset_instances = xm.xrt_world_size() * tpu_cores_per_node
     epoch_size = train_dataset_len // num_dataset_instances
 
     train_shards = "gs://sfr-tpu-us-east1-research/bwallace/imagenet_shards_2000_per/imagenet_shards_2000_per/imagenet-train-{000000..000640}.tar"
@@ -334,7 +336,6 @@ if __name__ == "__main__":
     config.cfg = config.build_cfg_from_argparse()
 
     if is_xla():
-        tpu_cores_per_node = 8
         xmp.spawn(main, args=(config.cfg,), nprocs=tpu_cores_per_node,
                 start_method='fork')
     else:
