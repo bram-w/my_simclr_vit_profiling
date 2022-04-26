@@ -1,6 +1,7 @@
 import os
 import pprint
 import time
+import webdataset as wds
 
 import torch
 import torchvision
