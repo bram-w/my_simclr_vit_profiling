@@ -2,7 +2,7 @@ import os
 import pprint
 import time
 import my_webdataset as wds
-from my_webdataset import DataPipeline
+from my_webdataset import DataPipeline, WebLoader
 
 import torch
 import torchvision
@@ -87,7 +87,7 @@ def load_training_data():
         wds.batched(local_batch_size)
         ).with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
     train_dataset.__len__ = epoch_size
-    train_loader = wds.WebLoader(train_dataset, num_workers=cfg.num_workers, batch_size=None)
+    train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers, batch_size=None)
     train_loader = train_loader.with_length(epoch_size) # adds `__len__` method to dataloader
     train_sampler = None
     ######### 
