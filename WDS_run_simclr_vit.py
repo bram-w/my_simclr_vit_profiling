@@ -37,6 +37,9 @@ try:
 except ImportError:
     xm = xmp = pl = xu = None
 
+def identity(x):
+    return x
+
 def load_training_data():
     world_size = get_world_size()
     local_batch_size = cfg.batch_size // world_size
