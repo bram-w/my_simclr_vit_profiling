@@ -18,7 +18,7 @@ class CLIPLoss(nn.Module):
 
         if local_batch_size != self.last_local_batch_size:
             self.labels = local_batch_size * get_rank() + torch.arange(
-                local_batch_size, device=embeddings.device
+                local_batch_size, device=image_embed.device
             )
             self.last_local_batch_size = local_batch_size
 
