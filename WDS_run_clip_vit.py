@@ -308,6 +308,8 @@ def train():
                 )
 
             # add terminatino on steps
+            if step+1 == iters_per_epoch:
+                break
 
         time_elapsed = time.time() - time_b
         master_print(f"epoch {epoch} done ({time_elapsed:.2f} sec)")
