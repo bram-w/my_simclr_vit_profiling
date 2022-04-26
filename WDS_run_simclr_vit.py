@@ -269,6 +269,7 @@ def train():
             master_print(len(data))
             master_print(len(target))
             master_print(data[0].shape)
+            data = torch.cat([data, data], dim=0)
             # sys.exit()
             # forward pass
             optimizer.zero_grad()
