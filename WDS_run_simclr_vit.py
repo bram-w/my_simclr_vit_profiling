@@ -39,8 +39,8 @@ except ImportError:
 def load_training_data():
     world_size = get_world_size()
     local_batch_size = cfg.batch_size // world_size
+    train_dataset_len = 1281167  # Exactly the size of Imagenet dataset.
     if cfg.fake_data:
-        train_dataset_len = 1281167  # Exactly the size of Imagenet dataset.
         train_loader = xu.SampleGenerator(
             data=(
                 torch.randn(2 * local_batch_size, 3, 224, 224),
