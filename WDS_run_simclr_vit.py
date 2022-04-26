@@ -187,6 +187,7 @@ def collate_fn(multi_view_img_list):
     and can be reshaped to (2, N, C, H, W) for loss computation
     """
     img_list = []
+    print(multi_view_img_list[0])
     for n_view in range(2):
         img_list.extend(views[n_view] for views, _ in multi_view_img_list)
     label_list = [label for _, label in multi_view_img_list]
