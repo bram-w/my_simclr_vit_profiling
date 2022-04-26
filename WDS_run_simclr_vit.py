@@ -187,7 +187,8 @@ def collate_fn(multi_view_img_list):
     and can be reshaped to (2, N, C, H, W) for loss computation
     """
     for thing in multi_view_img_list:
-        print(len(thing), torch.Tensor(thing[0]).shape)
+        print(len(thing))
+        print(torch.Tensor(thing[0]).shape)
         print(torch.Tensor(thing[1].shape))
         print(torch.Tensor(thing[2].shape))
     img_list = []
