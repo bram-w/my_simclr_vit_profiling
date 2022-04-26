@@ -75,7 +75,7 @@ def load_training_data():
     num_dataset_instances = xm.xrt_world_size() * cfg.num_workers
     epoch_size = train_dataset_len // num_dataset_instances
 
-    train_shards = "gs://sfr-tpu-us-east1-research/bwallace/cc12m_shards/cc12m-\{000000..009819}.tar"
+    train_shards = "gs://sfr-tpu-us-east1-research/bwallace/cc12m_shards/cc12m-{000000..009819}.tar"
     train_dataset = DataPipeline(
         wds.ResampledShards(train_shards),
         # we now have an iterator over all shards
