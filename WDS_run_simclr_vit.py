@@ -269,7 +269,7 @@ def train():
             master_print(len(data))
             master_print(len(target))
             master_print(data[0].shape)
-            sys.exit()
+            # sys.exit()
             # forward pass
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler is not None):
