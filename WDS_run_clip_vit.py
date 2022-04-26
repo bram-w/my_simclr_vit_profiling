@@ -266,6 +266,8 @@ def train():
     )
     for epoch in range(last_ckpt_epoch + 1, num_epochs + 1):
         master_print(f"starting epoch {epoch}")
+        master_print("Add clamping of logit scale")
+        master_print("Edit viz transform")
         time_b = time.time()
 
         if train_sampler is not None:
@@ -273,8 +275,6 @@ def train():
         for step, (img, txt) in enumerate(train_loader):
             # forward pass
             optimizer.zero_grad()
-            master_print("Add clamping of logit scale")
-            master_print("Edit viz transform")
             with torch.cuda.amp.autocast(enabled=scaler is not None):
                 output = model(img, txt)
                 loss = loss_fn(output)
@@ -299,7 +299,7 @@ def train():
             if (step + 1) % cfg.log_step_interval == 0:
                 lr = optimizer.param_groups[0]["lr"]
                 reduced_loss = reduce_tensor(loss, average=True).item()
-                smoothed_loss.update(reduced_loss, batch_size=target.size(0))
+                smoothed_loss.update(reduced_loss, batch_size=txt.size(0))
                 master_print(
                     f"epoch {epoch} step {(step + 1)}, lr: {lr:.4f}, "
                     f"loss: {reduced_loss:.4f}, "
