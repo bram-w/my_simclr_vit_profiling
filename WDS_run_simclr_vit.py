@@ -186,13 +186,12 @@ def collate_fn(multi_view_img_list):
     [img_1_view_1, ..., img_N_view_1, img_1_view_1, ..., img_N_view_1]
     and can be reshaped to (2, N, C, H, W) for loss computation
     """
-    label_list = [label for _, label in multi_view_img_list]
-    print(label_list[:5])
     for thing in multi_view_img_list:
         print(thing)
     img_list = []
     for n_view in range(2):
         img_list.extend(views[n_view] for views, _ in multi_view_img_list)
+    label_list = [label for _, label in multi_view_img_list]
     return torch.stack(img_list), torch.tensor(label_list, dtype=torch.long)
 
 
