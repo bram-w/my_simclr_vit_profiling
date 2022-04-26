@@ -69,9 +69,8 @@ def load_training_data():
     num_dataset_instances = xm.xrt_world_size() * cfg.num_workers
     epoch_size = train_dataset_len // num_dataset_instances
 
-    train_shards =
-    "gs://sfr-tpu-us-east1-research/bwallace/imagenet_shards_2000_per/imagenet_shards_2000_per/imagenet-train-{000000..000640}.tar"
-    dataset = wds.DataPipeline(
+    train_shards = "gs://sfr-tpu-us-east1-research/bwallace/imagenet_shards_2000_per/imagenet_shards_2000_per/imagenet-train-{000000..000640}.tar"
+    train_dataset = wds.DataPipeline(
         wds.ResampledShards(train_shards),
         # we now have an iterator over all shards
         wds.tarfile_to_samples(),
@@ -83,9 +82,9 @@ def load_training_data():
         wds.batched(local_batch_size)
         ).with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
 
-    loader = wds.WebLoader(dataset, num_workers=cfg.num_workers, batch_size=None)
-    loader = loader.with_length(epoch_size) # adds `__len__` method to dataloader
-
+    train_loader = wds.WebLoader(train_dataset, num_workers=cfg.num_workers, batch_size=None)
+    train_loader = train_loader.with_length(epoch_size) # adds `__len__` method to dataloader
+    train_sampler = None
     ######### 
     """
     train_dataset = torchvision.datasets.ImageFolder(
