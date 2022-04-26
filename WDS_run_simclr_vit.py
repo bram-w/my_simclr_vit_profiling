@@ -2,6 +2,7 @@ import os
 import pprint
 import time
 import my_webdataset as wds
+from my_webdataset import DataPipeline
 
 import torch
 import torchvision
@@ -74,7 +75,7 @@ def load_training_data():
     epoch_size = train_dataset_len // num_dataset_instances
 
     train_shards = "gs://sfr-tpu-us-east1-research/bwallace/imagenet_shards_2000_per/imagenet_shards_2000_per/imagenet-train-{000000..000640}.tar"
-    train_dataset = wds.DataPipeline(
+    train_dataset = DataPipeline(
         wds.ResampledShards(train_shards),
         # we now have an iterator over all shards
         wds.tarfile_to_samples(),
