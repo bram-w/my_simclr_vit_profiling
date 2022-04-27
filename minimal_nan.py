@@ -17,8 +17,8 @@ def main(*a):
     xm.mark_step()
     print(F.cross_entropy(logits_tpu, targets_tpu))
 
-    logits_cpu = zeros(bs, 4096)
-    logits_tpu = zeros(bs, 4096).to(device)
+    logits_cpu = torch.zeros(bs, 4096)
+    logits_tpu = torch.zeros(bs, 4096).to(device)
     print(F.cross_entropy(logits_cpu, targets_cpu))
     xm.mark_step()
     print(F.cross_entropy(logits_tpu, targets_tpu))
