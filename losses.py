@@ -44,7 +44,7 @@ class CLIPLoss(nn.Module):
         master_print(f"""Logits shape {logits_per_image.shape},
         {logits_per_text.shape} // Labels min/max {self.labels.min()}
         {self.labels.max()} // Nan in label?
-        {torch.any(torch.isnan(self.labels))}""")
+        {torch.any(torch.isnan(self.labels.float()))}""")
         output_from_zero_logits = F.cross_entropy(torch.zeros(*logits_per_image.shape), self.labels)
         master_print(f"Output from zero logits {output_from_flat_logits}")
 
