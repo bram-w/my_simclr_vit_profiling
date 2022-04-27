@@ -276,8 +276,6 @@ def train():
     )
     for epoch in range(last_ckpt_epoch + 1, num_epochs + 1):
         master_print(f"starting epoch {epoch}")
-        master_print("Add clamping of logit scale")
-        master_print("Edit viz transform")
         time_b = time.time()
 
         if train_sampler is not None:
