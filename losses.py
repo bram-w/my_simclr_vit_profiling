@@ -41,14 +41,13 @@ class CLIPLoss(nn.Module):
         loss = (F.cross_entropy(logits_per_image, self.labels) + \
             F.cross_entropy(logits_per_text, self.labels)) / 2
         master_print(f"Logits {nan_in_logits} loss {torch.isnan(loss)}")
+        master_print(f"""Logits shape {logits_per_image.shape},
+        {logits_per_text.shape} // Labels min/max {self.labels.min()}
+        {self.labels.max()} // Nan in label?
+        {torch.any(torch.isnan(self.labels))}""")
+        output_from_zero_logits = F.cross_entropy(torch.zeros(*logits_per_image.shape), self.labels)
+        master_print(f"Output from zero logits {output_from_flat_logits}")
 
-        # compute accuracy
-        # with torch.no_grad():
-        #     pred = torch.argmax(logits_per_image, dim=-1)
-        #     correct = pred.eq(self.labels).sum()
-        #     acc = 100 * correct / local_batch_size
-
-        # return {'loss': loss, 'clip_loss': loss, 'clip_acc': acc}
         return loss
 
 
