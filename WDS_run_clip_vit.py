@@ -53,8 +53,8 @@ def load_training_data():
     if cfg.fake_data:
         train_loader = xu.SampleGenerator(
             data=(
-                torch.randn(2 * local_batch_size, 3, 224, 224),
-                torch.zeros(local_batch_size, dtype=torch.int64),
+                torch.randn(local_batch_size, 3, 224, 224),
+                torch.randint(low=0, high=10000, size=(local_batch_size, 77))
             ),
             sample_count=train_dataset_len // local_batch_size // world_size,
         )
