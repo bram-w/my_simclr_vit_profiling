@@ -286,11 +286,11 @@ def train():
             with torch.cuda.amp.autocast(enabled=scaler is not None):
                 output = model(img, txt)
                 loss = loss_fn(output)
-                nan_in_image_embed = torch.any(torch.isnan(output['image_embed']))
-                nan_in_text_embed = torch.any(torch.isnan(output['text_embed']))
-                nan_in_loss = torch.any(torch.isnan(loss))
-                master_print(f"Any output nan? {nan_in_image_embed}  {nan_in_text_embed} any loss nan? {nan_in_loss}")
-                print(loss)
+                # nan_in_image_embed = torch.any(torch.isnan(output['image_embed']))
+                # nan_in_text_embed = torch.any(torch.isnan(output['text_embed']))
+                # nan_in_loss = torch.any(torch.isnan(loss))
+                # master_print(f"Any output nan? {nan_in_image_embed}  {nan_in_text_embed} any loss nan? {nan_in_loss}")
+                # print(loss)
             # backward pass
             if scaler is not None:
                 scaler.scale(loss).backward()
