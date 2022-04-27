@@ -35,9 +35,12 @@ class CLIPLoss(nn.Module):
         # cosine similarity as logits
         logits_per_image = logit_scale * image_embed @ text_embed_all.t()
         logits_per_text = logit_scale * text_embed @ image_embed_all.t()
+        
+        nan_in_logits = torch.any(torch.isnan(logits_per_image + logits_per_text))
 
         loss = (F.cross_entropy(logits_per_image, self.labels) + \
             F.cross_entropy(logits_per_text, self.labels)) / 2
+        master_print(f"Logits {nan_in_logits} loss {torch.isnan(loss)}")
 
         # compute accuracy
         # with torch.no_grad():
