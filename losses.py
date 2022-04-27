@@ -46,7 +46,7 @@ class CLIPLoss(nn.Module):
         {self.labels.max()} // Nan in label?
         {torch.any(torch.isnan(self.labels.float()))}""")
         output_from_zero_logits = F.cross_entropy(torch.zeros(*logits_per_image.shape).to(self.labels.device), self.labels)
-        master_print(f"Output from zero logits {output_from_flat_logits}")
+        master_print(f"Output from zero logits {output_from_zero_logits}")
 
         return loss
 
