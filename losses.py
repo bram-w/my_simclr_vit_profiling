@@ -41,6 +41,8 @@ class CLIPLoss(nn.Module):
         loss = (F.cross_entropy(logits_per_image, self.labels) + \
             F.cross_entropy(logits_per_text, self.labels)) / 2
         master_print(f"Logits {nan_in_logits} loss {torch.isnan(loss)}")
+        master_print(f"Image Logits min/max {logits_per_image.min()} {logits_per_image.max()}")
+        master_print(f"Text Logits min/max {logits_per_text.min()} {logits_per_text.max()}")
         master_print(f"""Logits shape {logits_per_image.shape},
         {logits_per_text.shape} // Labels min/max {self.labels.min()}
         {self.labels.max()} // Nan in label?
