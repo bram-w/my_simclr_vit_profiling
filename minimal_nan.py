@@ -10,11 +10,12 @@ def offset(e, pred, target, lossfn):
 def main(*a):
     import torch_xla.core.xla_model as xm
     device = xm.xla_device()
-    logits_cpu = torch.randn(5, 4096)
-    logits_tpu = torch.zeros(5, 4096).to(device)
-    logits_tpu.data = logits_cpu.data
-    targets_cpu = torch.arange(4000, 4005)
-    targets_cpu = torch.arange(4000, 4005).to(device)
+    bs = 128
+    logits_cpu = torch.randn(bs, 4096)
+    logits_tpu = torch.zeros(bs, 4096).to(device)
+    # logits_tpu.data = logits_cpu.data
+    targets_cpu = torch.arange(4000, 4000 + bs)
+    targets_cpu = torch.arange(4000, 4000 + bs).to(device)
     xm.mark_step()
     print(F.cross_entropy(logits_cpu, targets_cpu))
     xm.mark_step()
