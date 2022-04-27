@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from distributed import gather_tensor_with_backward, get_rank, get_world_size
+from distributed import gather_tensor_with_backward, get_rank, get_world_size, master_print
 
 class CLIPLoss(nn.Module):
     def __init__(self):
