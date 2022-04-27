@@ -2,12 +2,33 @@ import torch
 import torch.nn as nn
 import sys
 import torch_xla.distributed.xla_multiprocessing as xmp
-
+import torch.nn.functional as F
 
 def offset(e, pred, target, lossfn):
     return lossfn(pred-e, target)
 
+def main(*a):
+    import torch_xla.core.xla_model as xm
+    device = xm.xla_device()
+    logits_cpu = torch.randn(5, 4096)
+    logits_tpu = torch.zeros(5, 4096).to(device)
+    logits_tpu.data = logits_cpu.data
+    targets_cpu = torch.arange(4000, 4005)
+    targets_cpu = torch.arange(4000, 4005).to(device)
+    xm.mark_step()
+    print(F.cross_entropy(logits_cpu, targets_cpu))
+    xm.mark_step()
+    print(F.cross_entropy(logits_tpu, targets_tpu))
 
+    # offsets = [0, 1e-8, 1e-7][::-1]
+    # msg = '{} - offset {}\n\tinput {}\n\ttarget {}\n\tlossval {}\n'
+    # msg += '-'*40
+    # for o in offsets:
+    #     vcpu = offset(o, predcpu, targetcpu, lossfn)
+    #     vtpu = offset(o, predtpu, targettpu, lossfn)
+    #     xm.mark_step()
+    #     print(msg.format('CPU', o, predcpu-o, targetcpu, vcpu))
+"""
 def main(*a):
     import torch_xla.core.xla_model as xm
     device = xm.xla_device()
@@ -25,7 +46,7 @@ def main(*a):
         xm.mark_step()
         print(msg.format('CPU', o, predcpu-o, targetcpu, vcpu))
         print(msg.format('TPU', o, predtpu-o, targettpu, vtpu))
-
+"""
 
 if __name__ == '__main__':
     xmp.spawn(main, args=(1,), nprocs=1)
