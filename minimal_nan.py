@@ -12,7 +12,7 @@ def main(*a):
     device = xm.xla_device()
     bs = 128
     logits_cpu = torch.randn(bs, 4096)
-    logits_tpu = torch.zeros(bs, 4096).to(device)
+    logits_tpu = torch.randn(bs, 4096).to(device)
     # logits_tpu.data = logits_cpu.data
     targets_cpu = torch.arange(4096-bs, 4096)
     targets_tpu = torch.arange(4096-bs, 4096).to(device)
