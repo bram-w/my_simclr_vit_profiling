@@ -15,7 +15,7 @@ def main(*a):
     logits_tpu = torch.zeros(bs, 4096).to(device)
     # logits_tpu.data = logits_cpu.data
     targets_cpu = torch.arange(4000, 4000 + bs)
-    targets_cpu = torch.arange(4000, 4000 + bs).to(device)
+    targets_tpu = torch.arange(4000, 4000 + bs).to(device)
     xm.mark_step()
     print(F.cross_entropy(logits_cpu, targets_cpu))
     xm.mark_step()
