@@ -11,8 +11,8 @@ def main(*a):
     import torch_xla.core.xla_model as xm
     device = xm.xla_device()
     bs = 128
-    logits_cpu = torch.randn(bs, 4096)
-    logits_tpu = torch.randn(bs, 4096).to(device)
+    logits_cpu = 3*torch.randn(bs, 4096)
+    logits_tpu = 3*torch.randn(bs, 4096).to(device)
     # logits_tpu.data = logits_cpu.data
     targets_cpu = torch.arange(4096-bs, 4096)
     targets_tpu = torch.arange(4096-bs, 4096).to(device)
