@@ -94,7 +94,8 @@ def load_training_data():
         # we now have a list of decompressed train samples from each shard in this worker, in sequence
         wds.to_tuple("ppm;jpg;jpeg;png", "txt"),
         wds.map_tuple(viz_transform, tokenizer),
-        wds.batched(local_batch_size)
+        wds.batched(local_batch_size),
+        handler=wds.warn_and_continue
         ).with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
     train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
             batch_size=None) # , collate_fn=collate_fn)
