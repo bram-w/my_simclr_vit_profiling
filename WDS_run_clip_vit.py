@@ -88,16 +88,16 @@ def load_training_data():
     train_dataset = DataPipeline(
         wds.ResampledShards(train_shards),
         # we now have an iterator over all shards
-        wds.tarfile_to_samples(),
-        wds.shuffle(10000),
-        wds.decode("pil"),
+        wds.tarfile_to_samples(handler=wds.warn_and_continue),
+        wds.shuffle(10000, handler=wds.warn_and_continue),
+        wds.decode("pil", handler=wds.warn_and_continue),
         # we now have a list of decompressed train samples from each shard in this worker, in sequence
-        wds.to_tuple("ppm;jpg;jpeg;png", "txt"),
-        wds.map_tuple(viz_transform, tokenizer),
+        wds.to_tuple("ppm;jpg;jpeg;png", "txt", handler=wds.warn_and_continue),
+        wds.map_tuple(viz_transform, tokenizer, handler=wds.warn_and_continue),
         wds.batched(local_batch_size),
         ).with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
     train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
-            batch_size=None, handler=wds.warn_and_continue) # , collate_fn=collate_fn)
+            batch_size=None) # , collate_fn=collate_fn)
     train_loader = train_loader.with_length(epoch_size) # adds `__len__` method to dataloader
     train_sampler = None
     ######### 
