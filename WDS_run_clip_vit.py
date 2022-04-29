@@ -307,11 +307,17 @@ def train():
             else:
                 optimizer.step()
             lr_scheduler.step()
-            model.logit_scale.data.clamp_(0, 4.6052)
+
+            with torch.no_grad(): model.logit_scale.data.clamp_(0, 4.6052)
 
             if (step+1 ) % cfg.log_step_interval == 0:
                 lr = optimizer.param_groups[0]["lr"]
                 reduced_loss = reduce_tensor(loss, average=True).item()
+                master_print(
+                        f"epoch {epoch} step {(step + 1)}, lr: {lr:.4f}, "
+                        f"loss: {reduced_loss:.4f}, "
+                )
+                """
                 smoothed_loss.update(reduced_loss, batch_size=txt.size(0))
                 master_print(
                     f"epoch {epoch} step {(step + 1)}, lr: {lr:.4f}, "
@@ -319,6 +325,7 @@ def train():
                     f"loss (avg): {smoothed_loss.avg:.4f}, "
                     f"loss (median): {smoothed_loss.median:.4f}"
                 )
+                """
 
             # add terminatino on steps
             if step > iters_per_epoch:
