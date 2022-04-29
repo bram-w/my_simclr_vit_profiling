@@ -34,6 +34,35 @@ from my_webdataset import DataPipeline, WebLoader
 import slip_models
 from tokenizer import SimpleTokenizer
 
+
+class SampleGenerator(object):
+  """Iterator which returns multiple samples of a given input data.
+  Can be used in place of a PyTorch `DataLoader` to generate synthetic data.
+  Args:
+    data: The data which should be returned at each iterator step.
+    sample_count: The maximum number of `data` samples to be returned.
+  """
+
+  def __init__(self, data, sample_count):
+    self._data = data
+    self._sample_count = sample_count
+    self._count = 0
+
+  def __iter__(self):
+    return SampleGenerator(self._data, self._sample_count)
+
+  def __len__(self):
+    return self._sample_count
+
+  def __next__(self):
+    return self.next()
+
+  def next(self):
+    if self._count >= self._sample_count:
+      raise StopIteration
+    self._count += 1
+    return self._data
+
 # train_dataset_len = 12811 # 67  # Exactly the size of Imagenet dataset.
 train_dataset_len = 10055143  # Exactly the size of our vesion of CC12M
 try:
@@ -130,16 +159,15 @@ def load_training_data():
 
     return train_dataset, train_loader, train_sampler
 
-"""
-def DEPRECATED_load_training_data():
+def load_training_data_cuda():
     world_size = get_world_size()
     local_batch_size = cfg.batch_size // world_size
     if cfg.fake_data:
         train_dataset_len = 1281167  # Exactly the size of Imagenet dataset.
-        train_loader = xu.SampleGenerator(
+        train_loader = SampleGenerator(
             data=(
-                torch.zeros(2 * local_batch_size, 3, 224, 224),
-                torch.zeros(local_batch_size, dtype=torch.int64),
+                torch.zeros(local_batch_size, 3, 224, 224),
+                torch.randint(low=0, high=10000, size=(local_batch_size, 77), dtype=torch.int64)
             ),
             sample_count=train_dataset_len // local_batch_size // world_size,
         )
@@ -187,7 +215,6 @@ def DEPRECATED_load_training_data():
     master_print("data loading done!")
 
     return train_dataset, train_loader, train_sampler
-"""
 
 def collate_fn(multi_view_img_list):
     """
@@ -196,13 +223,12 @@ def collate_fn(multi_view_img_list):
     and can be reshaped to (2, N, C, H, W) for loss computation
     """
     img_list = []
-    master_print(len(multi_view_img_list))
-    # for n_view in range(2):
-    #    img_list.extend(views[n_view] for views, _ in multi_view_img_list)
-    # label_list = [label for  _, label in multi_view_img_list]
-    img_list.extend(view0 for view0, _, _ in multi_view_img_list)
-    img_list.extend(view1 for _, view1, _ in multi_view_img_list)
-    label_list = [label for _, _, label in multi_view_img_list]
+    for n_view in range(2):
+       img_list.extend(views[n_view] for views, _ in multi_view_img_list)
+    label_list = [label for  _, label in multi_view_img_list]
+    # img_list.extend(view0 for view0, _, _ in multi_view_img_list)
+    # img_list.extend(view1 for _, view1, _ in multi_view_img_list)
+    # label_list = [label for _, _, label in multi_view_img_list]
     return torch.stack(img_list), torch.tensor(label_list, dtype=torch.long)
 
 
@@ -210,7 +236,10 @@ def train():
     batch_size = cfg.batch_size
     num_epochs = cfg.num_epochs
     assert batch_size % get_world_size() == 0
-    train_dataset, train_loader, train_sampler = load_training_data()
+    if is_xla():
+        train_dataset, train_loader, train_sampler = load_training_data()
+    else:
+        train_dataset, train_loader, train_sampler = load_training_data_cuda()
     # model = SimCLRViTModel(
     #     cfg.vit_model_class, cfg.freeze_patch_embed, cfg.simclr_embed_dim
     # )
