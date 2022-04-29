@@ -116,20 +116,22 @@ def load_training_data():
     train_shards = "gs://sfr-tpu-us-east1-research/bwallace/cc12m_shards/cc12m-{000000..009819}.tar"
 
 
-    # train_dataset = DataPipeline(
-    #     wds.ResampledShards(train_shards),
-    #     # we now have an iterator over all shards
-    #     wds.tarfile_to_samples(handler=wds.warn_and_continue),
-    #     wds.shuffle(10000, handler=wds.warn_and_continue),
-    #     wds.decode("pil", handler=wds.warn_and_continue),
-    #     # we now have a list of decompressed train samples from each shard in this worker, in sequence
-    #     wds.to_tuple("ppm;jpg;jpeg;png", "txt", handler=wds.warn_and_continue),
-    #     wds.map_tuple(viz_transform, tokenizer, handler=wds.warn_and_continue),
-    #     wds.batched(local_batch_size),
-    #     ).with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
-    # train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
-    #         batch_size=None) # , collate_fn=collate_fn)
+    train_dataset = DataPipeline(
+         wds.ResampledShards(train_shards),
+        # we now have an iterator over all shards
+        wds.tarfile_to_samples(handler=wds.warn_and_continue),
+        wds.shuffle(10000, handler=wds.warn_and_continue),
+        wds.decode("pil", handler=wds.warn_and_continue),
+        # we now have a list of decompressed train samples from each shard in this worker, in sequence
+        wds.to_tuple("ppm;jpg;jpeg;png", "txt", handler=wds.warn_and_continue),
+        wds.map_tuple(viz_transform, tokenizer, handler=wds.warn_and_continue),
+        wds.batched(local_batch_size),
+        )# .with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
+    train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
+            batch_size=None) # , collate_fn=collate_fn)
     # train_loader = train_loader.with_length(epoch_size) # adds `__len__` method to dataloader
+
+    """
     train_dataset = (
             wds.WebDataset(train_shards, shardshuffle=True, handler=wds.warn_and_continue)
                 .shuffle(10000)
@@ -141,6 +143,7 @@ def load_training_data():
     train_loader = torch.utils.data.DataLoader(train_dataset,
                                                num_workers=cfg.num_workers,
                                                batch_size=None)
+    """
 
     train_sampler = None
     ######### 
@@ -371,18 +374,20 @@ def train():
                 """
 
             # add terminatino on steps
-            if step > iters_per_epoch:
-                break
+            if not step+1%iters_per_epoch:
 
-        time_elapsed = time.time() - time_b
-        master_print(f"epoch {epoch} done ({time_elapsed:.2f} sec)")
+                time_elapsed = time.time() - time_b
+                master_print(f"epoch {epoch} done ({time_elapsed:.2f} sec)")
 
-        if epoch % cfg.ckpt_epoch_interval == 0 or epoch == num_epochs:
-            ckpt_path = os.path.join(
-                cfg.ckpt_dir, f"{cfg.ckpt_prefix}_epoch_{epoch}.ckpt"
-            )
-            meta_data = {"cfg": cfg, "epoch": epoch}
-            save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data)
+                if epoch % cfg.ckpt_epoch_interval == 0 or epoch == num_epochs:
+                    ckpt_path = os.path.join(
+                        cfg.ckpt_dir, f"{cfg.ckpt_prefix}_epoch_{epoch}.ckpt"
+                    )
+                    meta_data = {"cfg": cfg, "epoch": epoch}
+                    save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data)
+                epoch += 1
+                master_print(f"starting epoch {epoch}")
+                time_b = time.time()
 
     master_print("training completed")
 
