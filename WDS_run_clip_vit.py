@@ -85,20 +85,34 @@ def load_training_data():
     epoch_size = train_dataset_len // num_dataset_instances
 
     train_shards = "gs://sfr-tpu-us-east1-research/bwallace/cc12m_shards/cc12m-{000000..009819}.tar"
-    train_dataset = DataPipeline(
-        wds.ResampledShards(train_shards),
-        # we now have an iterator over all shards
-        wds.tarfile_to_samples(handler=wds.warn_and_continue),
-        wds.shuffle(10000, handler=wds.warn_and_continue),
-        wds.decode("pil", handler=wds.warn_and_continue),
-        # we now have a list of decompressed train samples from each shard in this worker, in sequence
-        wds.to_tuple("ppm;jpg;jpeg;png", "txt", handler=wds.warn_and_continue),
-        wds.map_tuple(viz_transform, tokenizer, handler=wds.warn_and_continue),
-        wds.batched(local_batch_size),
-        ).with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
-    train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
-            batch_size=None) # , collate_fn=collate_fn)
-    train_loader = train_loader.with_length(epoch_size) # adds `__len__` method to dataloader
+
+
+    # train_dataset = DataPipeline(
+    #     wds.ResampledShards(train_shards),
+    #     # we now have an iterator over all shards
+    #     wds.tarfile_to_samples(handler=wds.warn_and_continue),
+    #     wds.shuffle(10000, handler=wds.warn_and_continue),
+    #     wds.decode("pil", handler=wds.warn_and_continue),
+    #     # we now have a list of decompressed train samples from each shard in this worker, in sequence
+    #     wds.to_tuple("ppm;jpg;jpeg;png", "txt", handler=wds.warn_and_continue),
+    #     wds.map_tuple(viz_transform, tokenizer, handler=wds.warn_and_continue),
+    #     wds.batched(local_batch_size),
+    #     ).with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
+    # train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
+    #         batch_size=None) # , collate_fn=collate_fn)
+    # train_loader = train_loader.with_length(epoch_size) # adds `__len__` method to dataloader
+    train_dataset = (
+            wds.WebDataset(train_shards, shardshuffle=True)
+                .shuffle(10000, handler=wds.warn_and_continue)
+                .decode("pil", handler=wds.warn_and_continue)
+                .to_tuple("jpg;jpeg;png", "txt", handler=wds.warn_and_continue)
+                .map_tuple(viz_transform, tokenizer, handler=wds.warn_and_continue)
+                .batched(local_batch_size)
+    )
+    train_loader = torch.utils.data.DataLoader(train_dataset,
+                                               num_workers=cfg.num_workers,
+                                               batch_size=None)
+
     train_sampler = None
     ######### 
     """

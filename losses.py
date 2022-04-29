@@ -36,10 +36,10 @@ class CLIPLoss(nn.Module):
         logits_per_image = logit_scale * image_embed @ text_embed_all.t()
         logits_per_text = logit_scale * text_embed @ image_embed_all.t()
         
-        nan_in_logits = torch.any(torch.isnan(logits_per_image + logits_per_text))
 
         loss = (F.cross_entropy(logits_per_image, self.labels) + \
             F.cross_entropy(logits_per_text, self.labels)) / 2
+        # nan_in_logits = torch.any(torch.isnan(logits_per_image + logits_per_text))
         # master_print(f"Logits {nan_in_logits} loss {torch.isnan(loss)}")
         # master_print(f"Image Logits min/max {logits_per_image.min()} {logits_per_image.max()}")
         # master_print(f"Text Logits min/max {logits_per_text.min()} {logits_per_text.max()}")
