@@ -273,10 +273,30 @@ def train():
             model, device_ids=[cfg.device_id], output_device=cfg.device_id
         )
 
+    p_wd, p_non_wd = [], []
+    for n, p in model.named_parameters():
+        if not p.requires_grad:
+            continue  # frozen weights
+        if p.ndim < 2 or 'bias' in n or 'ln' in n or 'bn' in n:
+            p_non_wd.append(p)
+        else:
+            p_wd.append(p)
+
+    optim_params = [{"params": p_wd, "weight_decay": cfg.weight_decay},
+                    {"params": p_non_wd, "weight_decay": 0}]
+
+
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
+        optim_params,
+        weight_decay=cfg.weight_decay,
+        lr=cfg.lr,
         betas=(0.9, 0.98)
     )
+
+    # optimizer = torch.optim.AdamW(
+    #     model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
+    #     betas=(0.9, 0.98)
+    # )
     iters_per_epoch = train_dataset_len / batch_size
     lr_scheduler = get_warmup_cosine_scheduler(
         optimizer,
