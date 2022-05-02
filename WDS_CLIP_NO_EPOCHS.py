@@ -374,7 +374,7 @@ def train():
                 """
 
             # add terminatino on steps
-            if not step+1%iters_per_epoch:
+            if not (step+1)%iters_per_epoch:
 
                 time_elapsed = time.time() - time_b
                 master_print(f"epoch {epoch} done ({time_elapsed:.2f} sec)")
