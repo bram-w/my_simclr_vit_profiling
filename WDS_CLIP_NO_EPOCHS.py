@@ -389,7 +389,7 @@ def train():
                     save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data)
                 epoch += 1
                 time_b = time.time()
-                if epoch>num_epoch:
+                if epoch>num_epochs:
                     break
                 master_print(f"starting epoch {epoch}")
 
