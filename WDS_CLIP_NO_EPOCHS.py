@@ -320,7 +320,9 @@ def train():
         "training begins (note that the first few XLA iterations "
         "are very slow due to compilation)"
     )
-    for epoch in range(last_ckpt_epoch + 1, num_epochs + 1):
+    # for epoch in range(last_ckpt_epoch + 1, num_epochs + 1):
+    epoch = last_ckpt_epoch + 1
+    while epoch <= num_epochs:
         master_print(f"starting epoch {epoch}")
         time_b = time.time()
 
@@ -374,7 +376,7 @@ def train():
                 """
 
             # add terminatino on steps
-            if not (step+1)%iters_per_epoch:
+            if ((step+1)%int(iters_per_epoch))==0:
 
                 time_elapsed = time.time() - time_b
                 master_print(f"epoch {epoch} done ({time_elapsed:.2f} sec)")
@@ -386,8 +388,10 @@ def train():
                     meta_data = {"cfg": cfg, "epoch": epoch}
                     save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data)
                 epoch += 1
-                master_print(f"starting epoch {epoch}")
                 time_b = time.time()
+                if epoch>num_epoch:
+                    break
+                master_print(f"starting epoch {epoch}")
 
     master_print("training completed")
 
