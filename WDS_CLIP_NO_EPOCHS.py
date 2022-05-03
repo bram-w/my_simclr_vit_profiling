@@ -264,14 +264,14 @@ def train():
     if is_xla():
         device = xm.xla_device()
         train_loader = pl.MpDeviceLoader(train_loader, device)
-        model = model.to(device)
-        broadcast_xla_master_model_param(model)
+        # model = model.to(device)
+        # broadcast_xla_master_model_param(model)
     else:
         device = torch.device(f"cuda:{cfg.device_id}")
-        model = model.to(device)
-        model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[cfg.device_id], output_device=cfg.device_id
-        )
+        # model = model.to(device)
+        # model = torch.nn.parallel.DistributedDataParallel(
+        #     model, device_ids=[cfg.device_id], output_device=cfg.device_id
+        # )
 
     p_wd, p_non_wd = [], []
     for n, p in model.named_parameters():
@@ -331,6 +331,15 @@ def train():
         last_ckpt_epoch = meta_data["epoch"]
     else:
         last_ckpt_epoch = 0
+
+    if is_xla():
+        model = model.to(device)
+        broadcast_xla_master_model_param(model)
+    else:
+        model = model.to(device)
+        model = torch.nn.parallel.DistributedDataParallel(
+            model, device_ids=[cfg.device_id], output_device=cfg.device_id
+        )
 
     synchronize()
     smoothed_loss = SmoothedValue(window_size=20)
