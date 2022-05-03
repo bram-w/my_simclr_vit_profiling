@@ -286,6 +286,7 @@ def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler):
     if scaler is not None:
         scaler.load_state_dict(ckpt["scaler"])
     meta_data = ckpt["meta_data"]
-
+    if is_xla():
+        broadcast_xla_master_model_param(model)
     master_print(f"resumed from checkpoint {ckpt_path}")
     return meta_data
