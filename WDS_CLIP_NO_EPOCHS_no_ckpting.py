@@ -1,3 +1,17 @@
+"""
+Orig assumes ckpt is readable from ALL devices, see https://github.com/ronghanghu/simclr_vit_profiling/tree/mocov3_vit_release
+
+Right now only readable by the one that saves it: master
+
+Doing via online would make a lot of sense
+
+Don't want to dive into rabbit hole for now, definitely would need to use online saving/ckpting
+which I know is rabbit hole. If I can walk away to honeymoon with version of things that works
+clean then can figure out checkpointing automatically when I return without it being as much of a
+stresser (b/c seems like can get smooth model runs anyways and can always do janky bootstrap)
+
+"""
+
 import os
 import pprint
 import time
