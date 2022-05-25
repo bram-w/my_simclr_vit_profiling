@@ -98,11 +98,10 @@ def broadcast_xla_master_model_param(model):
     xm.rendezvous("broadcast_xla_master_model_param")
 
 
-def is_xla():
-    from config import cfg
+def is_xla(cfg=None):
+    if cfg is None: from config import cfg
 
-    return cfg.device == "xla"
-
+    return (cfg.device == "xla" and (xm is not None))
 
 def master_print(*args, **kwargs):
     flush = kwargs.pop("flush", True)
@@ -226,7 +225,7 @@ def infer_init_method(cfg):
 
 def distributed_init(cfg, device_id):
     cfg.device_id = device_id
-    if is_xla():
+    if is_xla(cfg):
         cfg.world_size = xm.xrt_world_size()
         cfg.rank = xm.get_ordinal()
         return

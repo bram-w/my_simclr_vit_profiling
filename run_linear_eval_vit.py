@@ -6,7 +6,7 @@ import torch
 import torchvision
 import torchvision.transforms as T
 
-import config
+import config_simclr as config
 from models import LinearEvalViTModel
 from distributed import (
     get_world_size,

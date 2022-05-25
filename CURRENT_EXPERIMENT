@@ -1,0 +1,10 @@
+Trying to do multi-clustering objective from slides
+PRETTY sure that it will avoid collapse b/c that would result in individual clusters that are uniform at some level
+Biggest concern I suppose is just collapsing to uniform for everybody. Might have to upweight self sim loss to avoid that
+
+
+
+Possible tuning tweaks:
+- Mean or other normalization over los besides sum
+- Masking out diagonal in cluster dissim term (might not matter)
+- Incorporation of cross entropy for good behavior?

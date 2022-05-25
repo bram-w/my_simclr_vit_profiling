@@ -7,7 +7,7 @@ import torchvision
 import torchvision.transforms as T
 
 import config_simclr as config
-from losses import SimCLRLoss
+from losses import ExperimentalClusteringLoss
 from models import SimCLRViTModel
 from distributed import (
     get_world_size,
@@ -130,7 +130,7 @@ def train():
         )
 
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
+        model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay, eps=cfg.eps
     )
     iters_per_epoch = len(train_dataset) / batch_size
     lr_scheduler = get_warmup_cosine_scheduler(
@@ -141,11 +141,13 @@ def train():
     scaler = None
     if cfg.use_pytorch_amp:
         scaler = torch.cuda.amp.GradScaler()
-    loss_fn = SimCLRLoss(temperature=cfg.simclr_loss_temperature)
+    loss_fn = ExperimentalClusteringLoss(temperature=cfg.simclr_loss_temperature,
+                                         n_c=16,
+                                         d=16)
     if is_master():
         os.makedirs(cfg.ckpt_dir, exist_ok=True)
-    master_print("\nmodel:")
-    master_print(model, end="\n\n")
+    # master_print("\nmodel:")
+    # master_print(model, end="\n\n")
 
     resume_ckpt_path = None
     if cfg.resume_training:
@@ -222,7 +224,7 @@ def train():
             ckpt_path = os.path.join(
                 cfg.ckpt_dir, f"{cfg.ckpt_prefix}_epoch_{epoch}.ckpt"
             )
-            meta_data = {"cfg": cfg, "epoch": epoch}
+            meta_data = {"cfg": cfg, "epoch": epoch, 'loss':smoothed_loss.avg}
             save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data)
 
     master_print("training completed")
