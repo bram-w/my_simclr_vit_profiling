@@ -16,6 +16,7 @@ cfg.ckpt_dir = "./save"  # make sure it can be accessed from all nodes
 cfg.ckpt_prefix = "clip_vit"
 
 cfg.resume_training = True
+cfg.resume_model_only = False
 cfg.resume_ckpt_path = "<auto-resume-latest>"
 
 cfg.use_pytorch_amp = False
@@ -37,6 +38,7 @@ cfg.vit_model_class = "vit_base_patch16_224"
 cfg.freeze_patch_embed = True
 cfg.simclr_embed_dim = 256
 cfg.simclr_loss_temperature = 0.1
+cfg.num_prompt_tokens = 0
 
 # --------------------------------------------------------------------------- #
 # training options

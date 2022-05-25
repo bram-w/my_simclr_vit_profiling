@@ -15,6 +15,7 @@ from models import SimCLRViTModel
 from distributed import (
     get_world_size,
     get_rank,
+    get_model,
     is_master,
     is_xla,
     broadcast_xla_master_model_param,
@@ -110,7 +111,7 @@ def load_training_data():
     #                 ]
     #                     )
     ########
-    num_dataset_instances = xm.xrt_world_size() * cfg.num_workers
+    num_dataset_instances = get_world_size() * cfg.num_workers
     epoch_size = train_dataset_len // num_dataset_instances
 
     train_shards = "gs://sfr-tpu-us-east1-research/bwallace/cc12m_shards/cc12m-{000000..009819}.tar"
@@ -253,14 +254,17 @@ def train():
     batch_size = cfg.batch_size
     num_epochs = cfg.num_epochs
     assert batch_size % get_world_size() == 0
-    if is_xla():
-        train_dataset, train_loader, train_sampler = load_training_data()
-    else:
-        train_dataset, train_loader, train_sampler = load_training_data_cuda()
+    # if is_xla():
+    train_dataset, train_loader, train_sampler = load_training_data()
+    # else:
+    #     train_dataset, train_loader, train_sampler = load_training_data_cuda()
     # model = SimCLRViTModel(
     #     cfg.vit_model_class, cfg.freeze_patch_embed, cfg.simclr_embed_dim
     # )
     model = slip_models.CLIP_VITB16()
+
+
+
     if is_xla():
         device = xm.xla_device()
         train_loader = pl.MpDeviceLoader(train_loader, device)
@@ -272,7 +276,9 @@ def train():
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[cfg.device_id], output_device=cfg.device_id
         )
+    prompt = torch.nn.Parameter(torch.zeros(cfg.num_prompt_tokens, 768, device=device)) if cfg.num_prompt_tokens else None
 
+    """
     p_wd, p_non_wd = [], []
     for n, p in model.named_parameters():
         if not p.requires_grad:
@@ -284,7 +290,8 @@ def train():
 
     optim_params = [{"params": p_wd, "weight_decay": cfg.weight_decay},
                     {"params": p_non_wd, "weight_decay": 0}]
-
+    """
+    optim_params = [{"params":[prompt], "weight_decay":0}]
 
     optimizer = torch.optim.AdamW(
         optim_params,
@@ -327,7 +334,8 @@ def train():
             assert os.path.exists(cfg.resume_ckpt_file)
             resume_ckpt_path = cfg.resume_ckpt_file
     if resume_ckpt_path is not None:
-        meta_data = load_ckpt(resume_ckpt_path, model, optimizer, lr_scheduler, scaler)
+        meta_data = load_ckpt(resume_ckpt_path, model, optimizer, lr_scheduler, scaler,
+                                model_only=cfg.resume_model_only)
         last_ckpt_epoch = meta_data["epoch"]
     else:
         last_ckpt_epoch = 0
@@ -352,7 +360,7 @@ def train():
             # forward pass
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler is not None):
-                output = model(img, txt)
+                output = model(img, txt, viz_shallow_prompt=prompt)
                 loss = loss_fn(output)
                 # nan_in_image_embed = torch.any(torch.isnan(output['image_embed']))
                 # nan_in_text_embed = torch.any(torch.isnan(output['text_embed']))
@@ -376,7 +384,7 @@ def train():
                 optimizer.step()
             lr_scheduler.step()
 
-            with torch.no_grad(): model.logit_scale.data.clamp_(0, 4.6052)
+            with torch.no_grad(): get_model(model).logit_scale.data.clamp_(0, 4.6052)
 
             if (step+1 ) % cfg.log_step_interval == 0:
                 lr = optimizer.param_groups[0]["lr"]

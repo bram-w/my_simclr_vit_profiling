@@ -242,7 +242,7 @@ class ResampledShards(IterableDataset):
         if self.deterministic:
             seed = utils.make_seed(self.worker_seed(), self.epoch)
         else:
-            seed = utils.make_seed(self.worker_seed(), self.epoch, os.getpid(), time.time_ns(), os.urandom(4))
+            seed = utils.make_seed(self.worker_seed(), self.epoch, os.getpid(), 1e6 * time.time(), os.urandom(4))
         if os.environ.get("WDS_SHOW_SEED", "0") == "1":
             print(f"# ResampledShards seed {seed}")
         self.rng = random.Random(seed)

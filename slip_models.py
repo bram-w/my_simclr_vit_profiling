@@ -127,8 +127,8 @@ class CLIP(nn.Module):
         mask.triu_(1)  # zero out the lower diagonal
         return mask
 
-    def encode_image(self, image):
-        x = self.visual(image)
+    def encode_image(self, image, shallow_prompt=None):
+        x = self.visual(image, shallow_prompt=shallow_prompt)
         x = x @ self.image_projection
 
         return x
@@ -147,8 +147,8 @@ class CLIP(nn.Module):
 
         return x
 
-    def forward(self, image, text):
-        image_embed = self.encode_image(image)
+    def forward(self, image, text, viz_shallow_prompt=None):
+        image_embed = self.encode_image(image, shallow_prompt=viz_shallow_prompt)
         text_embed = self.encode_text(text)
 
         return {'image_embed': image_embed,

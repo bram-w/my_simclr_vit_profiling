@@ -97,6 +97,12 @@ def broadcast_xla_master_model_param(model):
     xm.all_reduce(xm.REDUCE_SUM, parameters_and_buffers)
     xm.rendezvous("broadcast_xla_master_model_param")
 
+def get_model(model):
+    if isinstance(model, torch.nn.DataParallel) \
+      or isinstance(model, torch.nn.parallel.DistributedDataParallel):
+        return model.module
+    else:
+        return model
 
 def is_xla():
     from config import cfg
@@ -272,7 +278,7 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
     master_print(f"checkpoint saved to {ckpt_path}")
 
 
-def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler):
+def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, model_only=False):
     from config import cfg
 
     if is_xla():
@@ -280,7 +286,22 @@ def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler):
     else:
         ckpt = torch.load(ckpt_path, map_location=f"cuda:{cfg.device_id}")
 
-    model.load_state_dict(ckpt["model"])
+    try:
+        model.load_state_dict(ckpt["model"])
+    except RuntimeError as e:
+        if list(ckpt['model'].keys())[0][:7] == 'module.': # saved data parallel and don't want
+            sd = {k[7:]:v for k,v in ckpt["model"].items()}
+        elif list(model.state_dict().keys())[0][:7] == 'module.': # have data parallel
+            sd = {f"module.{k}":v for k,v in ckpt["model"].items()}
+        else:
+            raise e
+        model.load_state_dict(sd)
+
+    if model_only:
+        master_print(f"loaded model-only from checkpoint {ckpt_path}")
+        return {"epoch":0}
+
+
     optimizer.load_state_dict(ckpt["optimizer"])
     lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
     if scaler is not None:
