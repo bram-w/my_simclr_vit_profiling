@@ -14,6 +14,7 @@ from torch import nn
 
 import losses
 
+from distributed import gather_tensor_with_backward, master_print
 
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""
@@ -76,12 +77,18 @@ class CLIP(nn.Module):
                  transformer_width: int,
                  transformer_heads: int,
                  transformer_layers: int,
+                 # prompt
+                 num_prompt_tokens: int,
+                 num_text_outputs: int,
+                 prompt_layers=12,
+                 prompt_heads=8,
                  **kwargs,
                  ):
         super().__init__()
 
         self.context_length = context_length
         self.vision_width = vision_width
+        self.embed_dim = embed_dim
 
         self.visual = vision_model
 
@@ -89,7 +96,7 @@ class CLIP(nn.Module):
             width=transformer_width,
             layers=transformer_layers,
             heads=transformer_heads,
-            attn_mask=self.build_attention_mask(),
+            attn_mask=self.build_attention_mask(self.context_length),
         )
 
         self.vocab_size = vocab_size
@@ -100,6 +107,16 @@ class CLIP(nn.Module):
         self.image_projection = nn.Parameter(torch.empty(vision_width, embed_dim))
         self.text_projection = nn.Parameter(torch.empty(transformer_width, embed_dim))
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+
+        self.num_prompt_tokens = num_prompt_tokens
+        if self.num_prompt_tokens:
+            self.prompt_projection = nn.Parameter(torch.empty(embed_dim, vision_width))
+            self.prompt_tokens = nn.Parameter(torch.empty(self.num_prompt_tokens, 1, vision_width))
+            self.prompt_transformer = Transformer(width=vision_width,
+                                                  layers=prompt_layers,
+                                                  heads=prompt_heads,
+                                                  attn_mask=self.build_attention_mask(num_text_outputs+num_prompt_tokens))
+
 
         self.initialize_parameters()
 
@@ -118,11 +135,15 @@ class CLIP(nn.Module):
 
         nn.init.normal_(self.image_projection, std=self.vision_width ** -0.5)
         nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+        
+        if self.num_prompt_tokens:
+            nn.init.normal_(self.prompt_tokens, std=0.01)
+            nn.init.normal_(self.prompt_projection, std=self.embed_dim ** -0.5)
 
-    def build_attention_mask(self):
+    def build_attention_mask(self, dim):
         # lazily create causal attention mask, with full attention between the vision tokens
         # pytorch uses additive attention mask; fill with -inf
-        mask = torch.empty(self.context_length, self.context_length)
+        mask = torch.empty(dim, dim)
         mask.fill_(float("-inf"))
         mask.triu_(1)  # zero out the lower diagonal
         return mask
@@ -133,7 +154,22 @@ class CLIP(nn.Module):
 
         return x
 
-    def encode_text(self, text):
+
+    def text_output_to_prompt_tokens(self, text_output):
+        # text output is local_bs x embed_dim
+        text_output_all = gather_tensor_with_backward(text_output)
+        # This will operate on the features which are N x embed_dim to start (after gather)
+        # don't want order to matter so no positional embedding
+        x = text_output_all @ self.prompt_projection
+        x = x.unsqueeze(1) # N x 1 x viz_width
+        # now add the prompt tokens (num_tokens x 1 x viz_width ) 
+        x = torch.cat([self.prompt_tokens, x], dim=0)
+        x = self.prompt_transformer(x) # still text_tokens+N x 1 x viz_width
+        # not doing final layernorm for now b/c will get that in ViT
+        # return self.num_prompt_token x viz_width
+        return x.squeeze()[:self.num_prompt_tokens]
+
+    def encode_text(self, text, return_features=True):
         x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
         x = x + self.positional_embedding
         x = x.permute(1, 0, 2)  # NLD -> LND
@@ -143,13 +179,24 @@ class CLIP(nn.Module):
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
-
+        features = x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
+        x = features @ self.text_projection
         return x
 
-    def forward(self, image, text, viz_shallow_prompt=None):
+    def forward(self, image, text, viz_shallow_prompt=None, lang_prompt_viz=False):
+        if lang_prompt_viz:
+            return self.forward_lang_prompts_viz(image, text)
         image_embed = self.encode_image(image, shallow_prompt=viz_shallow_prompt)
         text_embed = self.encode_text(text)
+
+        return {'image_embed': image_embed,
+                'text_embed': text_embed,
+                'logit_scale': self.logit_scale.exp()}
+
+    def forward_lang_prompts_viz(self, image, text):
+        text_embed = self.encode_text(text)
+        viz_prompt = self.text_output_to_prompt_tokens(text_embed)
+        image_embed = self.encode_image(image, shallow_prompt=viz_prompt)
 
         return {'image_embed': image_embed,
                 'text_embed': text_embed,
@@ -285,10 +332,11 @@ def SLIP_VITS16(**kwargs):
     return model
 
 
-def CLIP_VITB16(**kwargs):
+def CLIP_VITB16(num_prompt_tokens=0, num_text_outputs=0, **kwargs):
     vision_model = timm.create_model('vit_base_patch16_224', num_classes=0)
     model = CLIP(embed_dim=512, vision_width=768, vision_model=vision_model, context_length=77, vocab_size=49408,
-        transformer_width=512, transformer_heads=8, transformer_layers=12, **kwargs)
+        transformer_width=512, transformer_heads=8, transformer_layers=12,
+        num_prompt_tokens=num_prompt_tokens, num_text_outputs=num_text_outputs, **kwargs)
 
     return model
 

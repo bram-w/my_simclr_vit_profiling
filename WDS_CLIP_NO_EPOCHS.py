@@ -261,7 +261,8 @@ def train():
     # model = SimCLRViTModel(
     #     cfg.vit_model_class, cfg.freeze_patch_embed, cfg.simclr_embed_dim
     # )
-    model = slip_models.CLIP_VITB16()
+    model = slip_models.CLIP_VITB16(num_prompt_tokens=cfg.num_prompt_tokens,
+                                     num_text_outputs=batch_size)
 
 
 
@@ -276,7 +277,10 @@ def train():
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[cfg.device_id], output_device=cfg.device_id
         )
+
+    """
     prompt = torch.nn.Parameter(torch.zeros(cfg.num_prompt_tokens, 768, device=device)) if cfg.num_prompt_tokens else None
+    optim_params = [{"params":[prompt], "weight_decay":0}]
 
     """
     p_wd, p_non_wd = [], []
@@ -290,8 +294,6 @@ def train():
 
     optim_params = [{"params": p_wd, "weight_decay": cfg.weight_decay},
                     {"params": p_non_wd, "weight_decay": 0}]
-    """
-    optim_params = [{"params":[prompt], "weight_decay":0}]
 
     optimizer = torch.optim.AdamW(
         optim_params,
@@ -360,7 +362,8 @@ def train():
             # forward pass
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler is not None):
-                output = model(img, txt, viz_shallow_prompt=prompt)
+                # output = model(img, txt, viz_shallow_prompt=prompt)
+                output = model(img, txt, lang_prompt_viz=cfg.num_prompt_tokens)
                 loss = loss_fn(output)
                 # nan_in_image_embed = torch.any(torch.isnan(output['image_embed']))
                 # nan_in_text_embed = torch.any(torch.isnan(output['text_embed']))
