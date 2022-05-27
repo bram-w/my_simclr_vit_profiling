@@ -155,9 +155,9 @@ class CLIP(nn.Module):
         return x
 
 
-    def text_output_to_prompt_tokens(self, text_output):
+    def text_output_to_prompt_tokens(self, text_output, sharded_computation=True):
         # text output is local_bs x embed_dim
-        text_output_all = gather_tensor_with_backward(text_output)
+        text_output_all = gather_tensor_with_backward(text_output) if sharded_computation else text_output
         # This will operate on the features which are N x embed_dim to start (after gather)
         # don't want order to matter so no positional embedding
         x = text_output_all @ self.prompt_projection
@@ -183,9 +183,11 @@ class CLIP(nn.Module):
         x = features @ self.text_projection
         return x
 
-    def forward(self, image, text, viz_shallow_prompt=None, lang_prompt_viz=False):
+    def forward(self, image, text, viz_shallow_prompt=None, lang_prompt_viz=False,
+               sharded_computation=True):
         if lang_prompt_viz:
-            return self.forward_lang_prompts_viz(image, text)
+            return self.forward_lang_prompts_viz(image, text,
+                                                 sharded_computation=sharded_computation)
         image_embed = self.encode_image(image, shallow_prompt=viz_shallow_prompt)
         text_embed = self.encode_text(text)
 
@@ -193,9 +195,10 @@ class CLIP(nn.Module):
                 'text_embed': text_embed,
                 'logit_scale': self.logit_scale.exp()}
 
-    def forward_lang_prompts_viz(self, image, text):
+    def forward_lang_prompts_viz(self, image, text, sharded_computation=True):
         text_embed = self.encode_text(text)
-        viz_prompt = self.text_output_to_prompt_tokens(text_embed)
+        viz_prompt = self.text_output_to_prompt_tokens(text_embed,
+                                                       sharded_computation=sharded_computation)
         image_embed = self.encode_image(image, shallow_prompt=viz_prompt)
 
         return {'image_embed': image_embed,
