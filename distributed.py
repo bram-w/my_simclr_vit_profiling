@@ -290,8 +290,10 @@ def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, model_only=Fals
         model.load_state_dict(ckpt["model"])
     except RuntimeError as e:
         if list(ckpt['model'].keys())[0][:7] == 'module.': # saved data parallel and don't want
+            print("sd is from dataparalle, modifiying key names")
             sd = {k[7:]:v for k,v in ckpt["model"].items()}
         elif list(model.state_dict().keys())[0][:7] == 'module.': # have data parallel
+            print("sd is not from dataparallel, modifying key names")
             sd = {f"module.{k}":v for k,v in ckpt["model"].items()}
         else:
             raise e
