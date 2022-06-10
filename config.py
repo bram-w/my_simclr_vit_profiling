@@ -12,7 +12,7 @@ cfg = AttrDict()
 cfg.device = "xla"  # "xla" or "cuda"
 cfg.log_step_interval = 50
 cfg.ckpt_epoch_interval = 1
-cfg.ckpt_dir = "./save"  # make sure it can be accessed from all nodes
+cfg.ckpt_dir = "/export/home/<ADD YOUR USERNAME>/"  
 cfg.ckpt_prefix = "clip_vit"
 
 cfg.resume_training = True
