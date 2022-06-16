@@ -41,7 +41,7 @@ class IsolaCLIPLoss(nn.Module):
         image_unif_loss = torch.pdist(image_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
         unif_loss = (text_unif_loss + image_unif_loss) / 2
         
-        loss = 3 * align_loss  unif_loss
+        loss = 3 * align_loss + unif_loss
 
 class CLIPLoss(nn.Module):
     def __init__(self):
