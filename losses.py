@@ -4,6 +4,45 @@ import torch.nn.functional as F
 
 from distributed import gather_tensor_with_backward, get_rank, get_world_size, master_print
 
+class IsolaCLIPLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.labels = None
+        self.last_local_batch_size = None
+
+    def forward(self, outputs):
+        image_embed = outputs['image_embed']
+        text_embed = outputs['text_embed']
+        logit_scale = outputs['logit_scale']
+        local_batch_size = image_embed.size(0)
+
+        if local_batch_size != self.last_local_batch_size:
+            self.labels = local_batch_size * get_rank() + torch.arange(
+                local_batch_size, device=image_embed.device
+            )
+            self.last_local_batch_size = local_batch_size
+
+        # normalized features
+        image_embed = F.normalize(image_embed, dim=-1, p=2)
+        text_embed = F.normalize(text_embed, dim=-1, p=2)
+
+
+        align_loss = (image_embed - text_embed).norm(p=2, dim=1).pow(2).mean()
+
+        # gather features from all GPUs
+        # image_embed_all, text_embed_all = \
+        #     utils.all_gather_batch([image_embed, text_embed])
+        image_embed_all = gather_tensor_with_backward(image_embed)
+        text_embed_all = gather_tensor_with_backward(text_embed)
+
+        # Just doing uniformity loss on each device. Both are means so should be ok this way, but
+        # may need reweighting
+        text_unif_loss = torch.pdist(text_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
+        image_unif_loss = torch.pdist(image_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
+        unif_loss = (text_unif_loss + image_unif_loss) / 2
+        
+        loss = 3 * align_loss  unif_loss
+
 class CLIPLoss(nn.Module):
     def __init__(self):
         super().__init__()
