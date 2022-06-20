@@ -103,10 +103,11 @@ def load_training_data():
                         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                     ]
                         )
-    num_dataset_instances = xm.xrt_world_size() * cfg.num_workers
+    # num_dataset_instances = xm.xrt_world_size() * cfg.num_workers
+    num_dataset_instances = world_size * cfg.num_workers
     epoch_size = train_dataset_len // num_dataset_instances
 
-    train_shards = "/export/home/bwallace/cc12m_shards/cc12m-{000000..009819}.tar"
+    train_shards = cfg.data_dir + "/cc12m-{000000..009819}.tar"
 
 
     train_dataset = DataPipeline(
@@ -204,10 +205,11 @@ def train():
     batch_size = cfg.batch_size
     num_epochs = cfg.num_epochs
     assert batch_size % get_world_size() == 0
-    if is_xla():
-        train_dataset, train_loader, train_sampler = load_training_data()
-    else:
-        train_dataset, train_loader, train_sampler = load_training_data_cuda()
+    train_dataset, train_loader, train_sampler = load_training_data()
+    # if is_xla():
+    #     train_dataset, train_loader, train_sampler = load_training_data()
+    # else:
+    #     train_dataset, train_loader, train_sampler = load_training_data_cuda()
     model = slip_models.CLIP_VITB16()
     if is_xla():
         device = xm.xla_device()
@@ -218,7 +220,7 @@ def train():
         device = torch.device(f"cuda:{cfg.device_id}")
         model = model.to(device)
         model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[cfg.device_id], output_device=cfg.device_id
+            model, device_ids=[cfg.device_id], output_device=cfg.device_id, find_unused_parameters=True
         )
 
     p_wd, p_non_wd = [], []
@@ -295,7 +297,7 @@ def train():
             # forward pass
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler is not None):
-                output = model(img, txt)
+                output = model(img, txt, return_logit_scale=False)
                 loss = loss_fn(output)
             # backward pass
             if scaler is not None:
@@ -314,7 +316,7 @@ def train():
                 optimizer.step()
             lr_scheduler.step()
 
-            with torch.no_grad(): model.logit_scale.data.clamp_(0, 4.6052)
+            # with torch.no_grad(): model.logit_scale.data.clamp_(0, 4.6052)
 
             if (step+1 ) % cfg.log_step_interval == 0:
                 lr = optimizer.param_groups[0]["lr"]

@@ -147,13 +147,13 @@ class CLIP(nn.Module):
 
         return x
 
-    def forward(self, image, text):
+    def forward(self, image, text, return_logit_scale=True):
         image_embed = self.encode_image(image)
         text_embed = self.encode_text(text)
 
         return {'image_embed': image_embed,
                 'text_embed': text_embed,
-                'logit_scale': self.logit_scale.exp()}
+                'logit_scale': self.logit_scale.exp() if return_logit_scale else None}
 
 
 class SIMCLR(nn.Module):
