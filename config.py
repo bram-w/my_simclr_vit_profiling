@@ -17,6 +17,8 @@ cfg.ckpt_prefix = "clip_vit"
 
 cfg.resume_training = True
 cfg.resume_model_only = False
+cfg.train_prompt_transformer_only = False
+cfg.load_model_strict = True
 cfg.resume_ckpt_path = "<auto-resume-latest>"
 
 cfg.use_pytorch_amp = False
@@ -68,7 +70,7 @@ cfg.linear_eval.test_epoch_interval = 10
 # distributed options
 # --------------------------------------------------------------------------- #
 cfg.init_method = ""
-cfg.port = 20000
+cfg.port = "20000"
 cfg.world_size = -1
 cfg.rank = -1
 cfg.rank_offset = 0

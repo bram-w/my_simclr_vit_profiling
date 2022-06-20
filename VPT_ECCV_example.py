@@ -80,16 +80,6 @@ def identity(x):
 def load_training_data():
     world_size = get_world_size()
     local_batch_size = cfg.batch_size // world_size
-    if cfg.fake_data:
-        train_loader = xu.SampleGenerator(
-            data=(
-                torch.randn(local_batch_size, 3, 224, 224),
-                torch.randint(low=0, high=10000, size=(local_batch_size, 77))
-            ),
-            sample_count=train_dataset_len // local_batch_size // world_size,
-        )
-        train_sampler = None
-        return [None] * train_dataset_len, train_loader, train_sampler
 
     master_print(f"loading images from : {cfg.data_dir}")
     tokenizer = SimpleTokenizer()
@@ -100,78 +90,14 @@ def load_training_data():
                         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                     ]
                         )
-    # simclr_transform =     T.Compose(
-    #                 [
-    #                     T.RandomResizedCrop(size=224),
-    #                     T.RandomHorizontalFlip(p=0.5),
-    #                     ImgPilColorDistortion(strength=0.5),
-    #                     ImgPilGaussianBlur(p=0.5, radius_min=0.1, radius_max=2.0),
-    #                     T.ToTensor(),
-    #                     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    #                 ]
-    #                     )
-    ########
     num_dataset_instances = get_world_size() * cfg.num_workers
     epoch_size = train_dataset_len // num_dataset_instances
 
     train_shards = "gs://sfr-tpu-us-east1-research/bwallace/cc12m_shards/cc12m-{000000..009819}.tar"
 
 
-    train_dataset = DataPipeline(
-         wds.ResampledShards(train_shards),
-        # we now have an iterator over all shards
-        wds.tarfile_to_samples(handler=wds.warn_and_continue),
-        wds.shuffle(10000, handler=wds.warn_and_continue),
-        wds.decode("pil", handler=wds.warn_and_continue),
-        # we now have a list of decompressed train samples from each shard in this worker, in sequence
-        wds.to_tuple("ppm;jpg;jpeg;png", "txt", handler=wds.warn_and_continue),
-        wds.map_tuple(viz_transform, tokenizer, handler=wds.warn_and_continue),
-        wds.batched(local_batch_size),
-        )# .with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
-    train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
-            batch_size=None) # , collate_fn=collate_fn)
-    # train_loader = train_loader.with_length(epoch_size) # adds `__len__` method to dataloader
-
-    """
-    train_dataset = (
-            wds.WebDataset(train_shards, shardshuffle=True, handler=wds.warn_and_continue)
-                .shuffle(10000)
-                .decode("pil")
-                .to_tuple("jpg;jpeg;png", "txt")
-                .map_tuple(viz_transform, tokenizer)
-                .batched(local_batch_size)
-    )
-    train_loader = torch.utils.data.DataLoader(train_dataset,
-                                               num_workers=cfg.num_workers,
-                                               batch_size=None)
-    """
-
     train_sampler = None
     ######### 
-    """
-    train_dataset = torchvision.datasets.ImageFolder(
-        os.path.join(cfg.data_dir, "train"), simclr_transform
-    )
-
-    train_sampler = torch.utils.data.distributed.DistributedSampler(
-        train_dataset,
-        num_replicas=world_size,
-        rank=get_rank(),
-        drop_last=cfg.drop_last,
-        shuffle=True,
-    )
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=local_batch_size,
-        sampler=train_sampler,
-        drop_last=cfg.drop_last,
-        collate_fn=collate_fn,
-        shuffle=False if train_sampler else True,
-        num_workers=cfg.num_workers,
-        pin_memory=True,
-        persistent_workers=True,
-    )
-    """
     synchronize()
     master_print("data loading done!")
 
@@ -283,32 +209,17 @@ def train():
     optim_params = [{"params":[prompt], "weight_decay":0}]
 
     """
-    if cfg.train_prompt_transformer_only:
-        p_wd, p_non_wd = [], []
-        for n, p in model.named_parameters():
-            if not p.requires_grad:
-                continue  # frozen weights
-            if 'prompt_transformer' not in n:
-                continue
-            if p.ndim < 2 or 'bias' in n or 'ln' in n or 'bn' in n:
-                p_non_wd.append(p)
-            else:
-                p_wd.append(p)
+    p_wd, p_non_wd = [], []
+    for n, p in model.named_parameters():
+        if not p.requires_grad:
+            continue  # frozen weights
+        if p.ndim < 2 or 'bias' in n or 'ln' in n or 'bn' in n:
+            p_non_wd.append(p)
+        else:
+            p_wd.append(p)
 
-        optim_params = [{"params": p_wd, "weight_decay": cfg.weight_decay},
-                        {"params": p_non_wd, "weight_decay": 0}]
-    else:
-        p_wd, p_non_wd = [], []
-        for n, p in model.named_parameters():
-            if not p.requires_grad:
-                continue  # frozen weights
-            if p.ndim < 2 or 'bias' in n or 'ln' in n or 'bn' in n:
-                p_non_wd.append(p)
-            else:
-                p_wd.append(p)
-
-        optim_params = [{"params": p_wd, "weight_decay": cfg.weight_decay},
-                        {"params": p_non_wd, "weight_decay": 0}]
+    optim_params = [{"params": p_wd, "weight_decay": cfg.weight_decay},
+                    {"params": p_non_wd, "weight_decay": 0}]
 
     optimizer = torch.optim.AdamW(
         optim_params,
@@ -352,11 +263,11 @@ def train():
             resume_ckpt_path = cfg.resume_ckpt_file
     if resume_ckpt_path is not None:
         meta_data = load_ckpt(resume_ckpt_path, model, optimizer, lr_scheduler, scaler,
-                                model_only=cfg.resume_model_only,
-                                strict=cfg.load_model_strict)
+                                model_only=cfg.resume_model_only)
         last_ckpt_epoch = meta_data["epoch"]
     else:
         last_ckpt_epoch = 0
+
     synchronize()
     smoothed_loss = SmoothedValue(window_size=20)
     model.train()
@@ -395,12 +306,12 @@ def train():
                 xm.reduce_gradients(optimizer)
 
             # param update
-            lr_scheduler.step()
             if scaler is not None:
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 optimizer.step()
+            lr_scheduler.step()
 
             with torch.no_grad(): get_model(model).logit_scale.data.clamp_(0, 4.6052)
 
