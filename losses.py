@@ -37,12 +37,17 @@ class IsolaCLIPLoss(nn.Module):
 
         # Just doing uniformity loss on each device. Both are means so should be ok this way, but
         # may need reweighting
-        text_unif_loss = torch.pdist(text_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
-        image_unif_loss = torch.pdist(image_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
+        text_unif_loss = two_arr_pdist(text_embed, text_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
+        image_unif_loss = two_arr_pdist(image_embed, image_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
         unif_loss = (text_unif_loss + image_unif_loss) / 2
         
         loss = 3 * align_loss + unif_loss
         return loss
+
+def two_arr_pdist(a, b, p=2):
+    # base taken from https://pytorch.org/docs/stable/generated/torch.nn.functional.pdist.html
+    return (a[:, None] - b).norm(dim=2, p=p).flatten()
+
 
 class CLIPLoss(nn.Module):
     def __init__(self):

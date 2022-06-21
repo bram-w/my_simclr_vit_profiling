@@ -5,7 +5,7 @@ Saves to ckpts via master but can't read
 import os
 import pprint
 import time
-
+import json
 
 
 import torch
@@ -14,7 +14,7 @@ import torchvision.transforms as T
 
 # import clip_config as config
 import config
-from losses import SimCLRLoss, IsolaCLIPLoss
+from losses import SimCLRLoss, IsolaCLIPLoss, CLIPLoss
 from models import SimCLRViTModel
 from distributed import (
     get_world_size,
@@ -253,8 +253,8 @@ def train():
     if cfg.use_pytorch_amp:
         scaler = torch.cuda.amp.GradScaler()
     loss_fn = IsolaCLIPLoss()
-    if is_master():
-        os.makedirs(cfg.ckpt_dir, exist_ok=True)
+    # if is_master():
+    #     os.makedirs(cfg.ckpt_dir, exist_ok=True)
     master_print("\nmodel:")
     master_print(model, end="\n\n")
 
@@ -287,6 +287,9 @@ def train():
     )
     # for epoch in range(last_ckpt_epoch + 1, num_epochs + 1):
     epoch = last_ckpt_epoch + 1
+
+    logs = []
+    log_file = 'log.txt'
     while epoch <= num_epochs:
         master_print(f"starting epoch {epoch}")
         time_b = time.time()
@@ -297,7 +300,7 @@ def train():
             # forward pass
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler is not None):
-                output = model(img, txt, return_logit_scale=False)
+                output = model(img, txt) # , return_logit_scale=False)
                 loss = loss_fn(output)
             # backward pass
             if scaler is not None:
@@ -340,6 +343,11 @@ def train():
 
                 time_elapsed = time.time() - time_b
                 master_print(f"epoch {epoch} done ({time_elapsed:.2f} sec)")
+
+                info_dict = {"loss":reduced_loss, "epoch_time":time_elapsed, "epoch":epoch}
+                logs.append(info_dict)
+                with open(log_file, 'w') as out_file:
+                    json.dump(logs, out_file)
 
                 if epoch % cfg.ckpt_epoch_interval == 0 or epoch == num_epochs:
                     ckpt_path = os.path.join(
