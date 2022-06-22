@@ -5,15 +5,19 @@ import torch.nn.functional as F
 from distributed import gather_tensor_with_backward, get_rank, get_world_size, master_print
 
 class IsolaCLIPLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, use_image_unif_loss=True, use_text_unif_loss=True,
+                 align_scale=3, unif_scale=1):
         super().__init__()
         self.labels = None
         self.last_local_batch_size = None
+        self.use_image_unif_loss = use_image_unif_loss
+        self.use_text_unif_loss = use_text_unif_loss
+        self.align_scale = align_scale
+        self.unif_scale = unif_scale
 
     def forward(self, outputs):
         image_embed = outputs['image_embed']
         text_embed = outputs['text_embed']
-        logit_scale = outputs['logit_scale']
         local_batch_size = image_embed.size(0)
 
         if local_batch_size != self.last_local_batch_size:
@@ -37,11 +41,23 @@ class IsolaCLIPLoss(nn.Module):
 
         # Just doing uniformity loss on each device. Both are means so should be ok this way, but
         # may need reweighting
-        text_unif_loss = two_arr_pdist(text_embed, text_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
-        image_unif_loss = two_arr_pdist(image_embed, image_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
-        unif_loss = (text_unif_loss + image_unif_loss) / 2
-        
-        loss = 3 * align_loss + unif_loss
+
+        # blocking/indenting this for legibility
+        if self.use_text_unif_loss:
+            text_unif_loss = two_arr_pdist(text_embed, text_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
+        else:
+            text_unif_loss = 0
+
+        if self.use_image_unif_loss:
+            image_unif_loss = two_arr_pdist(image_embed, image_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
+        else:
+            image_unif_loss = 0
+
+        unif_loss_divisor = int(use_image_unif_loss) + int(use_text_unif_loss)
+        unif_loss = (text_unif_loss + image_unif_loss) / unif_loss_divisor if unif_loss_divisor else 0
+ 
+        # coefficient was optimal in orig. work       
+        loss = self.align_scale * align_loss + self.unif_scale * unif_loss
         return loss
 
 def two_arr_pdist(a, b, p=2):
@@ -50,10 +66,14 @@ def two_arr_pdist(a, b, p=2):
 
 
 class CLIPLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, use_image_unif_loss=True, use_text_unif_loss=True,
+                  unif_scale=0.1):
         super().__init__()
         self.labels = None
         self.last_local_batch_size = None
+        self.use_image_unif_loss = use_image_unif_loss
+        self.use_text_unif_loss = use_text_unif_loss
+        self.unif_scale = unif_scale
 
     def forward(self, outputs):
         image_embed = outputs['image_embed']
@@ -82,7 +102,7 @@ class CLIPLoss(nn.Module):
         logits_per_text = logit_scale * text_embed @ image_embed_all.t()
         
 
-        loss = (F.cross_entropy(logits_per_image, self.labels) + \
+        clip_loss = (F.cross_entropy(logits_per_image, self.labels) + \
             F.cross_entropy(logits_per_text, self.labels)) / 2
         # nan_in_logits = torch.any(torch.isnan(logits_per_image + logits_per_text))
         # master_print(f"Logits {nan_in_logits} loss {torch.isnan(loss)}")
@@ -94,6 +114,22 @@ class CLIPLoss(nn.Module):
         # {torch.any(torch.isnan(self.labels.float()))}""")
         # output_from_zero_logits = F.cross_entropy(torch.zeros(*logits_per_image.shape).to(self.labels.device), self.labels)
         # master_print(f"Output from zero logits {output_from_zero_logits}")
+
+        # blocking/indenting this for legibility
+        if self.use_text_unif_loss:
+            text_unif_loss = two_arr_pdist(text_embed, text_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
+        else:
+            text_unif_loss = 0
+
+        if self.use_image_unif_loss:
+            image_unif_loss = two_arr_pdist(image_embed, image_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
+        else:
+            image_unif_loss = 0
+        unif_loss_divisor = int(use_image_unif_loss) + int(use_text_unif_loss)
+        unif_loss = (text_unif_loss + image_unif_loss) / unif_loss_divisor if unif_loss_divisor else 0
+ 
+        # coefficient was optimal in orig. work       
+        loss = clip_loss + self.unif_scale * unif_loss
 
         return loss
 
@@ -123,7 +159,6 @@ class MY_UNIFINSHED_CLIPLoss(nn.Module):
         # These would be bs x embed dim, unnormalized
         image_embed = embeddings_dict['image_embed']
         text_embed = embeddings_dict['text_embed']
-        logit_scale = embeddings_dict['logit_scale']
 
 
         # embeddings = F.normalize(embeddings, dim=-1, p=2)

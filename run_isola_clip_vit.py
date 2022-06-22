@@ -252,7 +252,8 @@ def train():
     scaler = None
     if cfg.use_pytorch_amp:
         scaler = torch.cuda.amp.GradScaler()
-    loss_fn = IsolaCLIPLoss()
+    loss_fn = IsolaCLIPLoss(align_scale=cfg.isola_align_scale,
+                             unif_scale=cfg.isola_unif_scale)
     # if is_master():
     #     os.makedirs(cfg.ckpt_dir, exist_ok=True)
     master_print("\nmodel:")
