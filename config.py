@@ -11,7 +11,7 @@ cfg = AttrDict()
 # --------------------------------------------------------------------------- #
 cfg.device = "xla"  # "xla" or "cuda"
 cfg.log_step_interval = 50
-cfg.ckpt_epoch_interval = 1
+cfg.ckpt_epoch_interval = 5
 cfg.ckpt_dir = "/export/home/<ADD YOUR USERNAME>/"  
 cfg.ckpt_prefix = "clip_vit"
 
@@ -35,7 +35,7 @@ cfg.num_workers = 4
 # for a list of ViT model classes
 cfg.vit_model_class = "vit_base_patch16_224"
 cfg.freeze_patch_embed = True
-cfg.simclr_embed_dim = 256
+cfg.embed_dim = 512
 cfg.simclr_loss_temperature = 0.1
 
 # --------------------------------------------------------------------------- #
@@ -77,8 +77,8 @@ cfg.no_spawn = False
 # --------------------------------------------------------------------------- #
 # Isola options
 # --------------------------------------------------------------------------- #
-cfg.isola_align_scale = 3
-cfg.isola_unif_scale = 1
+cfg.isola_align_scale = 3.0
+cfg.isola_unif_scale = 1.0
 
 # --------------------------------------------------------------------------- #
 # --------------------------------------------------------------------------- #

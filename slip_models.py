@@ -285,9 +285,9 @@ def SLIP_VITS16(**kwargs):
     return model
 
 
-def CLIP_VITB16(**kwargs):
+def CLIP_VITB16(embed_dim=512, **kwargs):
     vision_model = timm.create_model('vit_base_patch16_224', num_classes=0)
-    model = CLIP(embed_dim=512, vision_width=768, vision_model=vision_model, context_length=77, vocab_size=49408,
+    model = CLIP(embed_dim=embed_dim, vision_width=768, vision_model=vision_model, context_length=77, vocab_size=49408,
         transformer_width=512, transformer_heads=8, transformer_layers=12, **kwargs)
 
     return model

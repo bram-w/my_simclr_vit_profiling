@@ -210,7 +210,7 @@ def train():
     #     train_dataset, train_loader, train_sampler = load_training_data()
     # else:
     #     train_dataset, train_loader, train_sampler = load_training_data_cuda()
-    model = slip_models.CLIP_VITB16()
+    model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)
     if is_xla():
         device = xm.xla_device()
         train_loader = pl.MpDeviceLoader(train_loader, device)
@@ -252,8 +252,13 @@ def train():
     scaler = None
     if cfg.use_pytorch_amp:
         scaler = torch.cuda.amp.GradScaler()
-    loss_fn = IsolaCLIPLoss(align_scale=cfg.isola_align_scale,
-                             unif_scale=cfg.isola_unif_scale)
+    if cfg.isola_align_scale and cfg.isola_unif_scale:
+        loss_fn = IsolaCLIPLoss(align_scale=cfg.isola_align_scale,
+                                 unif_scale=cfg.isola_unif_scale)
+    else:
+        loss_fn = CLIPLoss(use_image_unif_loss=cfg.isola_unif_scale,
+                           use_text_unif_loss=cfg.isola_unif_scale,
+                           unif_scale=cfg.isola_unif_scale)
     # if is_master():
     #     os.makedirs(cfg.ckpt_dir, exist_ok=True)
     master_print("\nmodel:")
@@ -290,7 +295,7 @@ def train():
     epoch = last_ckpt_epoch + 1
 
     logs = []
-    log_file = 'log.txt'
+    log_file = f'log_{cfg.ckpt_prefix}.txt'
     while epoch <= num_epochs:
         master_print(f"starting epoch {epoch}")
         time_b = time.time()

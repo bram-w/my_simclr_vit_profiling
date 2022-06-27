@@ -53,7 +53,7 @@ class IsolaCLIPLoss(nn.Module):
         else:
             image_unif_loss = 0
 
-        unif_loss_divisor = int(use_image_unif_loss) + int(use_text_unif_loss)
+        unif_loss_divisor = int(self.use_image_unif_loss) + int(self.use_text_unif_loss)
         unif_loss = (text_unif_loss + image_unif_loss) / unif_loss_divisor if unif_loss_divisor else 0
  
         # coefficient was optimal in orig. work       
@@ -66,7 +66,7 @@ def two_arr_pdist(a, b, p=2):
 
 
 class CLIPLoss(nn.Module):
-    def __init__(self, use_image_unif_loss=True, use_text_unif_loss=True,
+    def __init__(self, use_image_unif_loss=False, use_text_unif_loss=False,
                   unif_scale=0.1):
         super().__init__()
         self.labels = None
@@ -125,7 +125,7 @@ class CLIPLoss(nn.Module):
             image_unif_loss = two_arr_pdist(image_embed, image_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
         else:
             image_unif_loss = 0
-        unif_loss_divisor = int(use_image_unif_loss) + int(use_text_unif_loss)
+        unif_loss_divisor = int(self.use_image_unif_loss) + int(self.use_text_unif_loss)
         unif_loss = (text_unif_loss + image_unif_loss) / unif_loss_divisor if unif_loss_divisor else 0
  
         # coefficient was optimal in orig. work       
