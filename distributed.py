@@ -272,7 +272,8 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
     master_print(f"checkpoint saved to {ckpt_path}")
 
 
-def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler):
+def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler,
+              load_model_ckpt_only=False):
     from config import cfg
 
     if is_xla():
@@ -281,10 +282,11 @@ def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler):
         ckpt = torch.load(ckpt_path, map_location=f"cuda:{cfg.device_id}")
 
     model.load_state_dict(ckpt["model"])
-    optimizer.load_state_dict(ckpt["optimizer"])
-    lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
-    if scaler is not None:
-        scaler.load_state_dict(ckpt["scaler"])
+    if not load_model_ckpt_only:
+        optimizer.load_state_dict(ckpt["optimizer"])
+        lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
+        if scaler is not None:
+            scaler.load_state_dict(ckpt["scaler"])
     meta_data = ckpt["meta_data"]
     master_print(f"resumed from checkpoint {ckpt_path}")
     return meta_data

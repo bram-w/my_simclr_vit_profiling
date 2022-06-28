@@ -14,6 +14,7 @@ cfg.log_step_interval = 50
 cfg.ckpt_epoch_interval = 5
 cfg.ckpt_dir = "/export/home/<ADD YOUR USERNAME>/"  
 cfg.ckpt_prefix = "clip_vit"
+cfg.load_model_ckpt_only = False
 
 cfg.resume_training = True
 cfg.resume_ckpt_path = "<auto-resume-latest>"

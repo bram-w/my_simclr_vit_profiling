@@ -278,7 +278,8 @@ def train():
             assert os.path.exists(cfg.resume_ckpt_file)
             resume_ckpt_path = cfg.resume_ckpt_file
     if resume_ckpt_path is not None:
-        meta_data = load_ckpt(resume_ckpt_path, model, optimizer, lr_scheduler, scaler)
+        meta_data = load_ckpt(resume_ckpt_path, model, optimizer, lr_scheduler, scaler,
+                            load_model_ckpt_only=cfg.load_model_ckpt_only)
         last_ckpt_epoch = meta_data["epoch"]
     else:
         last_ckpt_epoch = 0
@@ -331,7 +332,7 @@ def train():
                 lr = optimizer.param_groups[0]["lr"]
                 reduced_loss = reduce_tensor(loss, average=True).item()
                 master_print(
-                        f"epoch {epoch} step {(step + 1)}, lr: {lr:.4f}, "
+                        f"epoch {epoch} step {(step + 1)}, lr: {lr:.7f}, "
                         f"loss: {reduced_loss:.4f}, "
                 )
                 """
