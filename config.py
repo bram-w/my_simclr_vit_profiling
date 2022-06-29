@@ -34,11 +34,12 @@ cfg.num_workers = 4
 # --------------------------------------------------------------------------- #
 # see https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
 # for a list of ViT model classes
-cfg.vit_model_class = "vit_base_patch16_224"
+# cfg.vit_model_class = "vit_base_patch16_224"
 cfg.freeze_patch_embed = True
 cfg.embed_dim = 512
 cfg.simclr_loss_temperature = 0.1
 
+cfg.multi_binary_model = False
 # --------------------------------------------------------------------------- #
 # training options
 # --------------------------------------------------------------------------- #
@@ -80,7 +81,7 @@ cfg.no_spawn = False
 # --------------------------------------------------------------------------- #
 cfg.isola_align_scale = 3.0
 cfg.isola_unif_scale = 1.0
-
+cfg.barlow_twins_loss = False
 # --------------------------------------------------------------------------- #
 # --------------------------------------------------------------------------- #
 

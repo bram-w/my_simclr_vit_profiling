@@ -14,6 +14,72 @@ from torch import nn
 
 import losses
 
+from torchvision.models import mobilenet_v3_small
+def text_binary_call():
+    # base is 512 8 12
+    # quadrating in width, linear in depth
+    # to reduce by 64 can reudce width by 8
+    # I don't think heads matters, but could be wrong.
+    # dropping down to maintain more width for each head
+    return CLIP(embed_dim=1,
+            vision_width=1,
+            vision_model=None,
+            context_length=77,
+            vocab_size=49408,
+            transformer_width=64,
+            transformer_heads=4,
+            transformer_layers=12
+            )
+
+class MultiBinaryText(nn.Module):
+
+    def __init__(self, num_models=64):
+        super().__init__()
+        self.model_list = nn.ModuleList([text_binary_call() for _ in range(num_models)])
+
+    def forward(self, x):
+        # this is raw logits, should sigmoid or tanh
+        return torch.cat([m.encode_text(x) for m in self.model_list], dim=1)
+
+def vision_binary_call():
+    net = mobilenet_v3_small(num_classes=1)
+    net.classifier[2].p = 0
+    return net
+
+class MultiBinaryVision(nn.Module):
+
+    def __init__(self, num_models=64):
+        super().__init__()
+        self.model_list = nn.ModuleList([vision_binary_call() for _ in range(num_models)])
+
+    def forward(self, x):
+        # this is raw logits, should sigmoid or tanh
+        return torch.cat([m(x) for m in self.model_list], dim=1)
+
+class MultiBinaryCLIP(nn.Module):
+    def __init__(self,
+                num_models,
+                ):
+        super().__init__()
+
+        self.visual = MultiBinaryVision(num_models)
+        self.language = MultiBinaryText(num_models)
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        
+    def encode_image(self, image):
+        return self.visual(image)
+
+    def encode_text(self, text):
+        return self.language(text)
+
+    def forward(self, image, text, return_logit_scale=True):
+        image_embed = self.encode_image(image)
+        text_embed = self.encode_text(text)
+
+        return {'image_embed': image_embed,
+                'text_embed': text_embed,
+                'logit_scale':self.logit_scale.exp() if return_logit_scale else None}
+
 
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""

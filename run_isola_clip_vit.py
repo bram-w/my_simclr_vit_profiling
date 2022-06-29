@@ -14,7 +14,7 @@ import torchvision.transforms as T
 
 # import clip_config as config
 import config
-from losses import SimCLRLoss, IsolaCLIPLoss, CLIPLoss
+from losses import SimCLRLoss, IsolaCLIPLoss, CLIPLoss, BarlowTwinsLoss
 from models import SimCLRViTModel
 from distributed import (
     get_world_size,
@@ -210,7 +210,10 @@ def train():
     #     train_dataset, train_loader, train_sampler = load_training_data()
     # else:
     #     train_dataset, train_loader, train_sampler = load_training_data_cuda()
-    model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)
+    if cfg.multi_binary_model:
+        model = slip_models.MultiBinaryCLIP(num_models=cfg.embed_dim)
+    else:
+        model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)
     if is_xla():
         device = xm.xla_device()
         train_loader = pl.MpDeviceLoader(train_loader, device)
@@ -252,17 +255,21 @@ def train():
     scaler = None
     if cfg.use_pytorch_amp:
         scaler = torch.cuda.amp.GradScaler()
-    if cfg.isola_align_scale and cfg.isola_unif_scale:
+    return_logit_scale = False
+    if cfg.barlow_twins_loss:
+        loss_fn = BarlowTwinsLoss(global_bs=cfg.batch_size)
+    elif cfg.isola_align_scale and cfg.isola_unif_scale:
         loss_fn = IsolaCLIPLoss(align_scale=cfg.isola_align_scale,
                                  unif_scale=cfg.isola_unif_scale)
     else:
+        return_logit_scale = True
         loss_fn = CLIPLoss(use_image_unif_loss=cfg.isola_unif_scale,
                            use_text_unif_loss=cfg.isola_unif_scale,
                            unif_scale=cfg.isola_unif_scale)
     # if is_master():
     #     os.makedirs(cfg.ckpt_dir, exist_ok=True)
-    master_print("\nmodel:")
-    master_print(model, end="\n\n")
+    # master_print("\nmodel:")
+    # master_print(model, end="\n\n")
 
     resume_ckpt_path = None
     if cfg.resume_training:
@@ -307,7 +314,7 @@ def train():
             # forward pass
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler is not None):
-                output = model(img, txt) # , return_logit_scale=False)
+                output = model(img, txt, return_logit_scale=return_logit_scale)
                 loss = loss_fn(output)
             # backward pass
             if scaler is not None:

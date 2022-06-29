@@ -2,7 +2,42 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from distributed import gather_tensor_with_backward, get_rank, get_world_size, master_print
+from distributed import gather_tensor_with_backward, get_rank, get_world_size, master_print, reduce_sum_with_backward
+
+
+def off_diagonal(x):
+    # return a flattened view of the off-diagonal elements of a square matrix
+    n, m = x.shape
+    assert n == m
+    return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+
+
+class BarlowTwinsLoss(nn.Module):
+    def __init__(self, global_bs, lambd=0.005):
+        super().__init__()
+        self.global_bs = global_bs
+        self.lambd = lambd
+
+    def bn(self, z):
+        return (z - z.mean(0)) / z.std(0)
+
+
+    def forward(self, outputs):
+
+        z1 = outputs['image_embed']
+        z2 = outputs['text_embed']
+        # empirical cross-correlation matrix
+        c = self.bn(z1).T @ self.bn(z2)
+
+        # sum the cross-correlation matrix between all gpus
+        c.div_(self.global_bs)
+        reduce_sum_with_backward(c)
+
+        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+        off_diag = off_diagonal(c).pow_(2).sum()
+        loss = on_diag + self.lambd * off_diag
+        return loss
+
 
 class IsolaCLIPLoss(nn.Module):
     def __init__(self, use_image_unif_loss=True, use_text_unif_loss=True,

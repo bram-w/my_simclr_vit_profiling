@@ -83,6 +83,12 @@ def gather_tensor_with_backward(tensor, dim=0):
 def xla_all_reduce_sum_with_backward(tensor):
     return XLAReduceSumLayer.apply(tensor)
 
+def reduce_sum_with_backward(tensor):
+    if is_xla():
+        return xla_all_reduce_sum_with_backward(tensor)
+    else:
+        return dist.all_reduce(tensor)
+
 
 def broadcast_xla_master_model_param(model):
     parameters_and_buffers = []
