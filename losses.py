@@ -18,8 +18,8 @@ class BarlowTwinsLoss(nn.Module):
         self.global_bs = global_bs
         self.lambd = lambd
 
-    def bn(self, z):
-        return (z - z.mean(0)) / z.std(0)
+    def bn(self, z, eps=1e-5):
+        return (z - z.mean(0)) / (z.var(0) + eps).pow(0.5)
 
 
     def forward(self, outputs):
