@@ -80,6 +80,35 @@ class MultiBinaryCLIP(nn.Module):
                 'text_embed': text_embed,
                 'logit_scale':self.logit_scale.exp() if return_logit_scale else None}
 
+import parallel_transformer
+import parallel_protonet
+class ParallelMultiBinaryCLIP(nn.Module):
+    def __init__(self, num_models):
+        super().__init__()
+        self.visual = parallel_protonet.make_simple_protonet(3, 64*64, 1, 64)
+        self.language = parallel_transformer.ParallelTextEncoder(num_models=64,
+                                                                output_dim_per_model=1,
+                                                                context_length=77,
+                                                                vocab_size=49408,
+                                                                transformer_width=64,
+                                                                transformer_heads=4,
+                                                                transformer_layers=6)
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        
+    def encode_image(self, image):
+        return self.visual(image)
+
+    def encode_text(self, text):
+        return self.language(text)
+
+    def forward(self, image, text, return_logit_scale=True):
+        image_embed = self.encode_image(image)
+        text_embed = self.encode_text(text)
+
+        return {'image_embed': image_embed,
+                'text_embed': text_embed,
+                'logit_scale':self.logit_scale.exp() if return_logit_scale else None}
+
 
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""
