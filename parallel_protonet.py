@@ -13,9 +13,13 @@ def param_count(m):
 
 # need to consider batchnorm 2d here
 def conv_block(in_channels, out_channels, groups=1):
+    assert not out_channels % 8
     return nn.Sequential(
         nn.Conv2d(in_channels, out_channels, 3, padding=1, groups=groups),
-        nn.BatchNorm2d(out_channels),
+        # nn.BatchNorm2d(out_channels),
+        # if have 6400 channels with 100 groups, want 800 groups here
+        # if have 3200 channels with 100 groups, want 400 groups here (8/)
+        nn.GroupNorm(out_channels // 8, out_channels),
         nn.ReLU(),
         nn.MaxPool2d(2)
     )
