@@ -14,6 +14,7 @@ from torch import nn
 
 import losses
 
+
 class ParallelLayerNorm(nn.Module):
     """Subclass torch's LayerNorm to handle fp16."""
     def __init__(self, groups, d):
@@ -77,7 +78,7 @@ class ParallelLinear(nn.Module):
         x = x.view(L, N, -1)
         return x
 
-class ParallelMultiheadAttention(nn.Module):
+class NaiveParallelMultiheadAttention(nn.Module):
     
     def __init__(self, groups, base_d, n_head_per_group):
         super().__init__()
@@ -112,6 +113,56 @@ class ParallelMultiheadAttention(nn.Module):
         x = self.out_proj(x)
         return x
 
+
+class ParallelMultiheadAttention(nn.Module):
+    
+    def __init__(self, groups, base_d, n_head_per_group):
+        super().__init__()
+        self.groups = groups
+        self.base_d = base_d
+        self.n_head_per_group = n_head_per_group
+
+        self.in_proj = ParallelLinear(groups * base_d, 3 * groups * base_d, groups)
+
+        # self.attn_base = nn.MultiheadAttention(groups * base_d, groups * n_head_per_group, bias=False)
+
+        self.out_proj = ParallelLinear(groups * base_d, groups * base_d, groups)
+
+
+    def functional_attention(self, q, k, v, attn_mask=None):
+        # q, k, v are  L X N x GD (I think):w
+        tgt_len, bsz, embed_dim = q.shape
+        num_heads = (self.groups * self.n_head_per_group)
+        assert not embed_dim % num_heads
+        head_dim = q.shape[-1] // num_heads
+
+        q = q.contiguous().view(tgt_len, bsz * num_heads, head_dim).transpose(0, 1)
+        k = k.contiguous().view(tgt_len, bsz * num_heads, head_dim).transpose(0, 1)
+        v = v.contiguous().view(tgt_len, bsz * num_heads, head_dim).transpose(0, 1)
+
+        attn_output, _ = torch.nn.functional._scaled_dot_product_attention(q, k, v, attn_mask)
+        attn_output = attn_output.transpose(0,1).contiguous().view(tgt_len, bsz, -1)
+        return attn_output
+
+    def forward(self, x, attn_mask, need_weights=False):
+        # x is L x N x (GD) where each models features are continuous (D + D + ... + D)
+        x = self.in_proj(x) # Now x is (3D + 3D + .. 3D)
+        # Might be more optimized to do this within linear
+        x = x.view(x.shape[0], x.shape[1], self.groups, 3, self.base_d).transpose(2, 3).flatten(start_dim=3)
+        # Now formerly clustered chunks are interwoven
+        # Before L X N X [a1 a2 a3 b1 b2 b3]
+        # now L X N X [[a1 b1] [a2 b2] [a3 b3]]
+        # so just send in rows
+
+        # Run pure attention (weights are frozen identity)
+        # now trying to make this function
+
+
+        # x = self.attn_base(x[:, :, 0], x[:, :, 1], x[:, :, 2], need_weights=need_weights, attn_mask=attn_mask)[0]
+        x = self.functional_attention(x[:, :, 0], x[:, :, 1], x[:, :, 2], attn_mask=attn_mask)
+        # Do final proj in groups
+        x = self.out_proj(x)
+        return x
 
 
 class ParallelResidualAttentionBlock(nn.Module):

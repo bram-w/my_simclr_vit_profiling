@@ -211,7 +211,8 @@ def train():
     # else:
     #     train_dataset, train_loader, train_sampler = load_training_data_cuda()
     if cfg.multi_binary_model:
-        model = slip_models.MultiBinaryCLIP(num_models=cfg.embed_dim)
+        # model = slip_models.MultiBinaryCLIP(num_models=cfg.embed_dim)
+        model = slip_models.ParallelMultiBinaryCLIP(num_models=cfg.embed_dim)
     else:
         model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)
     if is_xla():
@@ -341,6 +342,7 @@ def train():
                 master_print(
                         f"epoch {epoch} step {(step + 1)}, lr: {lr:.7f}, "
                         f"loss: {reduced_loss:.4f}, "
+                        f"elapsed time: {time.time() - time_b} sec"
                 )
                 """
                 smoothed_loss.update(reduced_loss, batch_size=txt.size(0))
