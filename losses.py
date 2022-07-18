@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from distributed import gather_tensor_with_backward, get_rank, get_world_size, master_print, reduce_sum_with_backward
+from distributed import gather_tensor_with_backward, get_rank, get_world_size, master_print, reduce_sum_with_backward, xla_all_reduce_sum_with_backward
 
 
 def off_diagonal(x):
@@ -19,7 +19,16 @@ class BarlowTwinsLoss(nn.Module):
         self.lambd = lambd
 
     def bn(self, z, eps=1e-5):
-        return (z - z.mean(0)) / (z.var(0) + eps).pow(0.5)
+        # return (z - z.mean(0)) / z.std(0)
+        local_mean = z.mean(0)
+        local_sqr_mean = (z*z).mean(0)
+
+        global_mean = xla_all_reduce_sum_with_backward(local_mean) / self.global_bs
+        global_sqr_mean = xla_all_reduce_sum_with_backward(local_sqr_mean) / self.global_bs
+
+        global_var = global_sqr_mean - global_mean.pow(2)
+
+        return (z - global_mean) / torch.sqrt(global_var + eps)
 
 
     def forward(self, outputs):
@@ -27,11 +36,10 @@ class BarlowTwinsLoss(nn.Module):
         z1 = outputs['image_embed']
         z2 = outputs['text_embed']
         # empirical cross-correlation matrix
-        c = self.bn(z1).T @ self.bn(z2)
+        c = (self.bn(z1).T @ self.bn(z2)) / self.global_bs
 
         # sum the cross-correlation matrix between all gpus
-        c.div_(self.global_bs)
-        reduce_sum_with_backward(c)
+        xla_all_reduce_sum_with_backward(c)
 
         on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
         off_diag = off_diagonal(c).pow_(2).sum()
