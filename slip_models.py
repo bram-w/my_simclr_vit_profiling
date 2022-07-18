@@ -85,7 +85,8 @@ import parallel_protonet
 class ParallelMultiBinaryCLIP(nn.Module):
     def __init__(self, num_models):
         super().__init__()
-        self.visual = parallel_protonet.make_simple_protonet(3, 64*64, 1, 64)
+        # self.visual = parallel_protonet.make_simple_protonet(3, 64*64, 64)
+        self.visual = parallel_protonet.make_protonet_v2(64)
         self.language = parallel_transformer.ParallelTextEncoder(num_models=64,
                                                                 output_dim_per_model=1,
                                                                 context_length=77,
