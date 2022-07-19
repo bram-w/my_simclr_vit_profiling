@@ -15,6 +15,10 @@ from torch import nn
 import losses
 
 from torchvision.models import mobilenet_v3_small
+import parallel_transformer
+import parallel_protonet
+
+
 def text_binary_call():
     # base is 512 8 12
     # quadrating in width, linear in depth
@@ -80,8 +84,15 @@ class MultiBinaryCLIP(nn.Module):
                 'text_embed': text_embed,
                 'logit_scale':self.logit_scale.exp() if return_logit_scale else None}
 
-import parallel_transformer
-import parallel_protonet
+def VisionParallelTextStandard():
+    viz_model = parallel_protonet.make_protonet_v2(64)
+    clip_model =  CLIP(64, 64, viz_model, 77, vocab_size=49408,
+                        transformer_width=512, transformer_heads=8, transformer_layers=12)
+    clip_model.image_projection.data = torch.eye(64)
+    clip_model.image_projection.requires_grad = False
+    return clip_model
+
+
 class ParallelMultiBinaryCLIP(nn.Module):
     def __init__(self, num_models):
         super().__init__()
@@ -108,7 +119,6 @@ class ParallelMultiBinaryCLIP(nn.Module):
         return {'image_embed': image_embed,
                 'text_embed': text_embed,
                 'logit_scale':self.logit_scale.exp() if return_logit_scale else None}
-
 
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""
