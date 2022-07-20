@@ -87,7 +87,8 @@ def reduce_sum_with_backward(tensor):
     if is_xla():
         return xla_all_reduce_sum_with_backward(tensor)
     else:
-        return dist.all_reduce(tensor)
+        dist.all_reduce(tensor)
+        return tensor
 
 
 def broadcast_xla_master_model_param(model):
@@ -292,7 +293,8 @@ def load_text_model_ckpt(ckpt_path, model):
 
     partial_text_sd = {k:v for k,v in ckpt.items() if is_part_of_text_sd(k)}
 
-    sd_load_return_tup, model.load_state_dict(ckpt, strict=False)
+    sd_load_return_tup = model.load_state_dict(ckpt, strict=False)
+    # print(sd_load_return_tup)
     assert not len(sd_load_return_tup.unexpected_keys)
     master_print(f"Using text model from pretrained checkpoint {ckpt_path}")
 
