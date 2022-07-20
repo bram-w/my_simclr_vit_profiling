@@ -84,13 +84,48 @@ class MultiBinaryCLIP(nn.Module):
                 'text_embed': text_embed,
                 'logit_scale':self.logit_scale.exp() if return_logit_scale else None}
 
-def VisionParallelTextStandard():
-    viz_model = parallel_protonet.make_protonet_v2(64)
-    clip_model =  CLIP(64, 64, viz_model, 77, vocab_size=49408,
+def VisionParallelTextStandard(embed_dim):
+    viz_model = parallel_protonet.make_protonet_v2(embed_dim)
+    clip_model =  CLIP(embed_dim, embed_dim, viz_model, 77, vocab_size=49408,
                         transformer_width=512, transformer_heads=8, transformer_layers=12)
-    clip_model.image_projection.data = torch.eye(64)
+    clip_model.image_projection.data = torch.eye(embed_dim)
     clip_model.image_projection.requires_grad = False
     return clip_model
+
+
+def VisionStandardTextParallel():
+    base_model = ParallelMultiBinaryCLIP(64)
+    base_model.visual = nn.Sequential(timm.create_model('vit_base_patch16_224', num_classes=0),
+                                        nn.Linear(768, 64, bias=False))
+    return base_model
+
+
+class ParallelMultiBinaryCLIP(nn.Module):
+    def __init__(self, num_models):
+        super().__init__()
+        # self.visual = parallel_protonet.make_simple_protonet(3, 64*64, 64)
+        self.visual = parallel_protonet.make_protonet_v2(64)
+        self.language = parallel_transformer.ParallelTextEncoder(num_models=64,
+                                                                output_dim_per_model=1,
+                                                                context_length=77,
+                                                                vocab_size=49408,
+                                                                transformer_width=64,
+                                                                transformer_heads=4,
+                                                                transformer_layers=6)
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        
+    def encode_image(self, image):
+        return self.visual(image)
+
+    def encode_text(self, text):
+        return self.language(text)
+
+    def forward(self, image, text, return_logit_scale=True):
+        image_embed = self.encode_image(image)
+        text_embed = self.encode_text(text)
+        return {'image_embed': image_embed,
+                'text_embed': text_embed,
+                'logit_scale':self.logit_scale.exp() if return_logit_scale else None}
 
 
 class ParallelMultiBinaryCLIP(nn.Module):

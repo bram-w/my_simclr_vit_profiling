@@ -212,7 +212,9 @@ def train():
     #     train_dataset, train_loader, train_sampler = load_training_data_cuda()
     if cfg.multi_binary_model:
         # model = slip_models.MultiBinaryCLIP(num_models=cfg.embed_dim)
-        model = slip_models.ParallelMultiBinaryCLIP(num_models=cfg.embed_dim)
+        # model = slip_models.ParallelMultiBinaryCLIP(num_models=cfg.embed_dim)
+        # model = slip_models.VisionStandardTextParallel()
+        model = slip_models.VisionParallelTextStandard(cfg.embed_dim)
     else:
         model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)
     if is_xla():
