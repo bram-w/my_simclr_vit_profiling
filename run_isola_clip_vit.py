@@ -214,7 +214,7 @@ def train():
         # model = slip_models.MultiBinaryCLIP(num_models=cfg.embed_dim)
         # model = slip_models.ParallelMultiBinaryCLIP(num_models=cfg.embed_dim)
         # model = slip_models.VisionStandardTextParallel()
-        model = slip_models.VisionParallelTextStandard(cfg.embed_dim)
+        model = slip_models.VisionParallelTextStandard(cfg.num_models, cfg.embed_dim // cfg.num_models)
     else:
         model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)
     if is_xla():
@@ -275,6 +275,7 @@ def train():
     # master_print(model, end="\n\n")
 
     resume_ckpt_path = None
+    assert not (cfg.resume_training and cfg.pretrained_text_ckpt)
     if cfg.resume_training:
         if cfg.resume_ckpt_path == "<auto-resume-latest>":
             # find the lastest checkpoint file
@@ -287,6 +288,9 @@ def train():
         else:
             assert os.path.exists(cfg.resume_ckpt_file)
             resume_ckpt_path = cfg.resume_ckpt_file
+    elif cfg.pretrained_text_ckpt:
+        load_text_model_ckpt(cfg.pretrained_text_ckpt, model)
+
     if resume_ckpt_path is not None:
         meta_data = load_ckpt(resume_ckpt_path, model, optimizer, lr_scheduler, scaler,
                             load_model_ckpt_only=cfg.load_model_ckpt_only)

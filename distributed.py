@@ -278,6 +278,24 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
     master_print(f"checkpoint saved to {ckpt_path}")
 
 
+
+def is_part_of_text_sd(k):
+    return (k in ['positional_embedding', 'text_projection'] or k.split('.')[0] in ['transformer', 'ln_final', 'token_embedding'])
+
+def load_text_model_ckpt(ckpt_path, model):
+    from config import cfg
+
+    if is_xla():
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+    else:
+        ckpt = torch.load(ckpt_path, map_location=f"cuda:{cfg.device_id}")
+
+    partial_text_sd = {k:v for k,v in ckpt.items() if is_part_of_text_sd(k)}
+
+    sd_load_return_tup, model.load_state_dict(ckpt, strict=False)
+    assert not len(sd_load_return_tup.unexpected_keys)
+    master_print(f"Using text model from pretrained checkpoint {ckpt_path}")
+
 def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler,
               load_model_ckpt_only=False):
     from config import cfg

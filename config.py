@@ -18,6 +18,7 @@ cfg.load_model_ckpt_only = False
 
 cfg.resume_training = True
 cfg.resume_ckpt_path = "<auto-resume-latest>"
+cfg.pretrained_text_ckpt = ''
 
 cfg.use_pytorch_amp = False
 
@@ -37,6 +38,7 @@ cfg.num_workers = 4
 # cfg.vit_model_class = "vit_base_patch16_224"
 cfg.freeze_patch_embed = True
 cfg.embed_dim = 512
+cfg.num_models = 64
 cfg.simclr_loss_temperature = 0.1
 
 cfg.multi_binary_model = False

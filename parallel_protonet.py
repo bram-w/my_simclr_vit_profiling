@@ -47,7 +47,7 @@ def conv_block_resnet(in_channels, out_channels, groups=1):
             # nn.ReLU()
             )
 
-def make_protonet_v2(num_groups):
+def make_protonet_v2(num_groups, output_dim_per_group=1):
 
     # start by replicating resnet
     conv1 = nn.Conv2d(3, 64*num_groups, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
@@ -61,7 +61,7 @@ def make_protonet_v2(num_groups):
             conv_block_resnet(128*num_groups, 256*num_groups, groups=num_groups),
             conv_block_resnet(256*num_groups, 256*num_groups, groups=num_groups),
             nn.AdaptiveAvgPool2d((1, 1)), # shape is now bs x hidden_channels x 1 x 1
-            nn.Conv2d(256*num_groups, num_groups, 1, groups=num_groups),
+            nn.Conv2d(256*num_groups, num_groups * output_dim_per_group, 1, groups=num_groups),
             nn.Flatten()
             )
     return encoder
