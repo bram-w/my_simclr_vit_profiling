@@ -84,8 +84,9 @@ class MultiBinaryCLIP(nn.Module):
                 'text_embed': text_embed,
                 'logit_scale':self.logit_scale.exp() if return_logit_scale else None}
 
-def VisionParallelTextStandard(embed_dim, output_dim_per_model):
-    viz_model = parallel_protonet.make_protonet_v2(embed_dim, output_dim_per_model)
+def VisionParallelTextStandard(num_models, output_dim_per_model):
+    embed_dim = num_models * output_dim_per_model
+    viz_model = parallel_protonet.make_protonet_v2(num_models, output_dim_per_model)
     clip_model =  CLIP(embed_dim, embed_dim, viz_model, 77, vocab_size=49408,
                         transformer_width=512, transformer_heads=8, transformer_layers=12)
     clip_model.image_projection.data = torch.eye(embed_dim)
