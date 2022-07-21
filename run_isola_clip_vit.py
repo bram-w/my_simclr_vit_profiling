@@ -29,6 +29,7 @@ from distributed import (
     reduce_tensor,
     save_ckpt,
     load_ckpt,
+    load_text_model_ckpt
 )
 from schedulers import get_warmup_cosine_scheduler
 from transforms import ImgPilColorDistortion, ImgPilGaussianBlur, MultiViewGenerator
