@@ -23,8 +23,10 @@ class BarlowTwinsLoss(nn.Module):
         local_mean = z.mean(0)
         local_sqr_mean = (z*z).mean(0)
 
-        global_mean = xla_all_reduce_sum_with_backward(local_mean) / self.global_bs
-        global_sqr_mean = xla_all_reduce_sum_with_backward(local_sqr_mean) / self.global_bs
+        # global_mean = xla_all_reduce_sum_with_backward(local_mean) / self.global_bs
+        # global_sqr_mean = xla_all_reduce_sum_with_backward(local_sqr_mean) / self.global_bs
+        global_mean = reduce_sum_with_backward(local_mean) / self.global_bs
+        global_sqr_mean = reduce_sum_with_backward(local_sqr_mean) / self.global_bs
 
         global_var = global_sqr_mean - global_mean.pow(2)
 
@@ -39,7 +41,8 @@ class BarlowTwinsLoss(nn.Module):
         c = (self.bn(z1).T @ self.bn(z2)) / self.global_bs
 
         # sum the cross-correlation matrix between all gpus
-        xla_all_reduce_sum_with_backward(c)
+        # xla_all_reduce_sum_with_backward(c)
+        reduce_sum_with_backward(c)
 
         on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
         off_diag = off_diagonal(c).pow_(2).sum()
