@@ -293,7 +293,7 @@ def load_text_model_ckpt(ckpt_path, model):
 
     partial_text_sd = {k:v for k,v in ckpt.items() if is_part_of_text_sd(k)}
 
-    sd_load_return_tup = model.load_state_dict(ckpt, strict=False)
+    sd_load_return_tup = model.load_state_dict(partial_text_sd, strict=False)
     # print(sd_load_return_tup)
     assert not len(sd_load_return_tup.unexpected_keys)
     master_print(f"Using text model from pretrained checkpoint {ckpt_path}")
