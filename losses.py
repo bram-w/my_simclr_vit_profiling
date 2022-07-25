@@ -152,6 +152,7 @@ class CLIPLoss(nn.Module):
         image_embed_all = gather_tensor_with_backward(image_embed)
         text_embed_all = gather_tensor_with_backward(text_embed)
         if self.expert_loss:
+            raise NotImplementedError # this thing still loss collapses
             # Have num_normalization_groups so
             # local embed is LBS x G x D
             # global embed is BS x G x D
@@ -171,11 +172,13 @@ class CLIPLoss(nn.Module):
             # A scalar below matters a lot. Doing the previous sum results in tiny tiny losses, 
             # doing nothing results in quite large losses
             # ideally want loss in the 1-6 range or so starting out, where it's beating chance but has a lot to learn
+            print(image_group_sims[self.identity_idx, self.labels].sum())
             image_group_sims[self.identity_idx, self.labels] *= image_group_sims[self.identity_idx,
-                                                                                    self.labels].mul(1).softmax(-1).detach()
+                                                                                    self.labels].add(1).softmax(-1).detach()
+            print(image_group_sims[self.identity_idx, self.labels].sum())
             # current_text_sum = text_group_sims[self.identity_idx, self.labels].sum()
             text_group_sims[self.identity_idx, self.labels] *= text_group_sims[self.identity_idx,
-                                                                                self.labels].mul(1).softmax(-1).detach()
+                                                                                self.labels].add(1).softmax(-1).detach()
             logits_per_image = logit_scale * image_group_sims.sum(-1)
             logits_per_text = logit_scale * text_group_sims.sum(-1)
         else:
