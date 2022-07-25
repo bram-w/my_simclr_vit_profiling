@@ -38,7 +38,7 @@ cfg.num_workers = 4
 # cfg.vit_model_class = "vit_base_patch16_224"
 cfg.freeze_patch_embed = True
 cfg.embed_dim = 512
-cfg.num_models = 64
+cfg.num_models = 0
 cfg.simclr_loss_temperature = 0.1
 
 cfg.multi_binary_model = False
@@ -84,6 +84,7 @@ cfg.no_spawn = False
 # --------------------------------------------------------------------------- #
 cfg.isola_align_scale = 0.0
 cfg.isola_unif_scale = 0.0
+cfg.expert_loss = False
 cfg.barlow_twins_loss = False
 # --------------------------------------------------------------------------- #
 # --------------------------------------------------------------------------- #

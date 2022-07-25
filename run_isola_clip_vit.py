@@ -211,8 +211,8 @@ def train():
     #     train_dataset, train_loader, train_sampler = load_training_data()
     # else:
     #     train_dataset, train_loader, train_sampler = load_training_data_cuda()
-    assert not (cfg.multi_binary_model and cfg.use_mobilenet)
-    if cfg.multi_binary_model:
+    assert not (cfg.num_models and cfg.use_mobilenet)
+    if cfg.num_models:
         # model = slip_models.MultiBinaryCLIP(num_models=cfg.embed_dim)
         # model = slip_models.ParallelMultiBinaryCLIP(num_models=cfg.embed_dim)
         # model = slip_models.VisionStandardTextParallel()
@@ -272,7 +272,10 @@ def train():
         return_logit_scale = True
         loss_fn = CLIPLoss(use_image_unif_loss=cfg.isola_unif_scale,
                            use_text_unif_loss=cfg.isola_unif_scale,
-                           unif_scale=cfg.isola_unif_scale)
+                           unif_scale=cfg.isola_unif_scale,
+                           num_normalization_groupings=cfg.num_models,
+                           expert_loss=cfg.expert_loss
+                           )
     # if is_master():
     #     os.makedirs(cfg.ckpt_dir, exist_ok=True)
     # master_print("\nmodel:")
@@ -351,7 +354,7 @@ def train():
                 reduced_loss = reduce_tensor(loss, average=True).item()
                 master_print(
                         f"epoch {epoch} step {(step + 1)}, lr: {lr:.7f}, "
-                        f"loss: {reduced_loss:.4f}, "
+                        f"loss: {reduced_loss:.7f}, "
                         f"elapsed time: {time.time() - time_b} sec"
                 )
                 """

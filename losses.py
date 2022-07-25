@@ -113,13 +113,17 @@ def two_arr_pdist(a, b, p=2):
 
 class CLIPLoss(nn.Module):
     def __init__(self, use_image_unif_loss=False, use_text_unif_loss=False,
-                  unif_scale=0.1):
+                  unif_scale=0.1, num_normalization_groupings=0,
+                  expert_loss=False):
         super().__init__()
         self.labels = None
         self.last_local_batch_size = None
         self.use_image_unif_loss = use_image_unif_loss
         self.use_text_unif_loss = use_text_unif_loss
         self.unif_scale = unif_scale
+        self.num_normalization_groupings = num_normalization_groupings
+        if expert_loss: assert num_normalization_groupings
+        self.expert_loss = expert_loss
 
     def forward(self, outputs):
         image_embed = outputs['image_embed']
@@ -128,39 +132,65 @@ class CLIPLoss(nn.Module):
         local_batch_size = image_embed.size(0)
 
         if local_batch_size != self.last_local_batch_size:
-            self.labels = local_batch_size * get_rank() + torch.arange(
-                local_batch_size, device=image_embed.device
-            )
+            self.identity_idx = torch.arange(local_batch_size, device=image_embed.device)
+            self.labels = local_batch_size * get_rank() + self.identity_idx
             self.last_local_batch_size = local_batch_size
 
         # normalized features
+
+        if self.num_normalization_groupings:
+            image_embed = image_embed.view(local_batch_size,
+                                            self.num_normalization_groupings,
+                                            -1)
+            text_embed = text_embed.view(local_batch_size,
+                                            self.num_normalization_groupings,
+                                            -1)
         image_embed = F.normalize(image_embed, dim=-1, p=2)
         text_embed = F.normalize(text_embed, dim=-1, p=2)
 
-        # gather features from all GPUs
-        # image_embed_all, text_embed_all = \
-        #     utils.all_gather_batch([image_embed, text_embed])
+
         image_embed_all = gather_tensor_with_backward(image_embed)
         text_embed_all = gather_tensor_with_backward(text_embed)
+        if self.expert_loss:
+            # Have num_normalization_groups so
+            # local embed is LBS x G x D
+            # global embed is BS x G x D
+            image_group_sims = (image_embed.unsqueeze(1) * text_embed_all).sum(dim=-1)
+            text_group_sims = (text_embed.unsqueeze(1) * image_embed_all).sum(dim=-1)
+            # print(image_group_sims.min(), image_group_sims.max())
+            # now both are LBS x BS x G
+            # want to weight *_group_sims[torch.arange(LBS), labels]
+            # want to put more weight on largest value
 
-        # cosine similarity as logits
-        logits_per_image = logit_scale * image_embed @ text_embed_all.t()
-        logits_per_text = logit_scale * text_embed @ image_embed_all.t()
+            # image_group_sims[self.identity_idx, self.labels].pow_(2)
+            # image_group_sims[self.identity_idx, self.labels].div_(image_group_sims[self.identity_idx, self.labels].sum())
+            # text_group_sims[self.identity_idx, self.labels].pow_(2)
+            # text_group_sims[self.identity_idx, self.labels].div_(text_group_sims[self.identity_idx, self.labels].sum())
+
+            # current_image_sum = image_group_sims[self.identity_idx, self.labels].sum()
+            # A scalar below matters a lot. Doing the previous sum results in tiny tiny losses, 
+            # doing nothing results in quite large losses
+            # ideally want loss in the 1-6 range or so starting out, where it's beating chance but has a lot to learn
+            image_group_sims[self.identity_idx, self.labels] *= image_group_sims[self.identity_idx,
+                                                                                    self.labels].mul(1).softmax(-1).detach()
+            # current_text_sum = text_group_sims[self.identity_idx, self.labels].sum()
+            text_group_sims[self.identity_idx, self.labels] *= text_group_sims[self.identity_idx,
+                                                                                self.labels].mul(1).softmax(-1).detach()
+            logits_per_image = logit_scale * image_group_sims.sum(-1)
+            logits_per_text = logit_scale * text_group_sims.sum(-1)
+        else:
+            # the below line doesn't do anything in normal case but flattens
+            # in multimodel case
+            image_embed = image_embed.view(local_batch_size, -1)
+            text_embed = text_embed.view(local_batch_size, -1)
+            # cosine similarity as logits
+            logits_per_image = logit_scale * image_embed @ text_embed_all.t()
+            logits_per_text = logit_scale * text_embed @ image_embed_all.t()
         
-
+        # print(logits_per_image.min(), logits_per_image.max())
         clip_loss = (F.cross_entropy(logits_per_image, self.labels) + \
             F.cross_entropy(logits_per_text, self.labels)) / 2
-        # nan_in_logits = torch.any(torch.isnan(logits_per_image + logits_per_text))
-        # master_print(f"Logits {nan_in_logits} loss {torch.isnan(loss)}")
-        # master_print(f"Image Logits min/max {logits_per_image.min()} {logits_per_image.max()}")
-        # master_print(f"Text Logits min/max {logits_per_text.min()} {logits_per_text.max()}")
-        # master_print(f"""Logits shape {logits_per_image.shape},
-        # {logits_per_text.shape} // Labels min/max {self.labels.min()}
-        # {self.labels.max()} // Nan in label?
-        # {torch.any(torch.isnan(self.labels.float()))}""")
-        # output_from_zero_logits = F.cross_entropy(torch.zeros(*logits_per_image.shape).to(self.labels.device), self.labels)
-        # master_print(f"Output from zero logits {output_from_zero_logits}")
-
+        # print(clip_loss)
         # blocking/indenting this for legibility
         if self.use_text_unif_loss:
             text_unif_loss = two_arr_pdist(text_embed, text_embed_all, p=2).pow(2).mul(-2).exp().mean().log()
