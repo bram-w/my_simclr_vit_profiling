@@ -149,9 +149,9 @@ class CLIPLoss(nn.Module):
         text_embed = F.normalize(text_embed, dim=-1, p=2)
 
 
-        image_embed_all = gather_tensor_with_backward(image_embed)
-        text_embed_all = gather_tensor_with_backward(text_embed)
         if self.expert_loss:
+            image_embed_all = gather_tensor_with_backward(image_embed)
+            text_embed_all = gather_tensor_with_backward(text_embed)
             raise NotImplementedError # this thing still loss collapses
             # Have num_normalization_groups so
             # local embed is LBS x G x D
@@ -186,6 +186,8 @@ class CLIPLoss(nn.Module):
             # in multimodel case
             image_embed = image_embed.view(local_batch_size, -1)
             text_embed = text_embed.view(local_batch_size, -1)
+            image_embed_all = gather_tensor_with_backward(image_embed)
+            text_embed_all = gather_tensor_with_backward(text_embed)
             # cosine similarity as logits
             logits_per_image = logit_scale * image_embed @ text_embed_all.t()
             logits_per_text = logit_scale * text_embed @ image_embed_all.t()
