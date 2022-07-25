@@ -42,6 +42,7 @@ cfg.num_models = 64
 cfg.simclr_loss_temperature = 0.1
 
 cfg.multi_binary_model = False
+cfg.use_mobilenet = False
 # --------------------------------------------------------------------------- #
 # training options
 # --------------------------------------------------------------------------- #

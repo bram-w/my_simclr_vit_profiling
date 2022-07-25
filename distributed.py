@@ -288,10 +288,11 @@ def load_text_model_ckpt(ckpt_path, model):
 
     if is_xla():
         ckpt = torch.load(ckpt_path, map_location="cpu")
+        partial_text_sd = {k:v for k,v in ckpt.items() if is_part_of_text_sd(k)}
     else:
         ckpt = torch.load(ckpt_path, map_location=f"cuda:{cfg.device_id}")
+        partial_text_sd = {f"module.{k}":v for k,v in ckpt.items() if is_part_of_text_sd(k)}
 
-    partial_text_sd = {k:v for k,v in ckpt.items() if is_part_of_text_sd(k)}
 
     sd_load_return_tup = model.load_state_dict(partial_text_sd, strict=False)
     # print(sd_load_return_tup)

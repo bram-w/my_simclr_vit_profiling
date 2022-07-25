@@ -211,11 +211,14 @@ def train():
     #     train_dataset, train_loader, train_sampler = load_training_data()
     # else:
     #     train_dataset, train_loader, train_sampler = load_training_data_cuda()
+    assert not (cfg.multi_binary_model and cfg.use_mobilenet)
     if cfg.multi_binary_model:
         # model = slip_models.MultiBinaryCLIP(num_models=cfg.embed_dim)
         # model = slip_models.ParallelMultiBinaryCLIP(num_models=cfg.embed_dim)
         # model = slip_models.VisionStandardTextParallel()
         model = slip_models.VisionParallelTextStandard(cfg.num_models, cfg.embed_dim // cfg.num_models)
+    elif cfg.use_mobilenet:
+        model = slip_models.CLIP_MobileNetV3Small()
     else:
         model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)
     if is_xla():

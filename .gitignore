@@ -1,3 +1,6 @@
+*OUT
+launch*sh
+
 *.log
 *.err
 *.pyc

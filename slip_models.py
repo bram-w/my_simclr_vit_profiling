@@ -402,6 +402,13 @@ def vit_small_mocov3_patch16_224(**kwargs):
 
     return model
 
+def CLIP_MobileNetV3Small(embed_dim=512, **kwargs):
+    vision_model = mobilenet_v3_small(num_classes=0)
+    vision_model.classifier = torch.nn.Identity()
+    model = CLIP(embed_dim=embed_dim, vision_width=576, vision_model=vision_model, context_length=77, vocab_size=49408,
+        transformer_width=512, transformer_heads=8, transformer_layers=12, **kwargs)
+
+    return model
 
 def CLIP_VITS16(**kwargs):
     vision_model = timm.create_model('vit_small_mocov3_patch16_224', num_classes=0)
