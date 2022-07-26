@@ -135,6 +135,8 @@ class CLIPLoss(nn.Module):
             self.identity_idx = torch.arange(local_batch_size, device=image_embed.device)
             self.labels = local_batch_size * get_rank() + self.identity_idx
             self.last_local_batch_size = local_batch_size
+            self.base_mask_tensor = torch.eye(local_batch_size, device=image_embed.device,
+                                                dtype=torch.bool)
 
         # normalized features
 
@@ -152,7 +154,7 @@ class CLIPLoss(nn.Module):
         if self.expert_loss:
             image_embed_all = gather_tensor_with_backward(image_embed)
             text_embed_all = gather_tensor_with_backward(text_embed)
-            raise NotImplementedError # this thing still loss collapses
+            # raise NotImplementedError # this thing still loss collapses
             # Have num_normalization_groups so
             # local embed is LBS x G x D
             # global embed is BS x G x D
@@ -172,6 +174,7 @@ class CLIPLoss(nn.Module):
             # A scalar below matters a lot. Doing the previous sum results in tiny tiny losses, 
             # doing nothing results in quite large losses
             # ideally want loss in the 1-6 range or so starting out, where it's beating chance but has a lot to learn
+            """
             print(image_group_sims[self.identity_idx, self.labels].sum())
             image_group_sims[self.identity_idx, self.labels] *= image_group_sims[self.identity_idx,
                                                                                     self.labels].add(1).softmax(-1).detach()
@@ -179,8 +182,45 @@ class CLIPLoss(nn.Module):
             # current_text_sum = text_group_sims[self.identity_idx, self.labels].sum()
             text_group_sims[self.identity_idx, self.labels] *= text_group_sims[self.identity_idx,
                                                                                 self.labels].add(1).softmax(-1).detach()
+
+            """
+            # train full independent, index select the above sims by some metric (most accurate? best on diag?)
+            # Don't want to just do highest
+            # full on calc softmax for each and then select base off of that
+            # Still might need balancing but that can be next step
+            # THINK CAREFULLY ON HOW WNT TO BALANCE SPECIALIZATION WITH DODING COLLAPSE
+            """
+            THIS IS CARRYING BATCH SIZE WITH IT
+            print(image_group_sims[self.identity_idx, self.labels].shape)
+            print(image_group_sims[self.identity_idx, self.labels], text_group_sims[self.identity_idx, self.labels])
+            print(image_group_sims[self.identity_idx, self.labels].max(), text_group_sims[self.identity_idx, self.labels].max())
+            image_group_sims[self.identity_idx, self.labels] = image_group_sims[self.identity_idx, self.labels] - image_group_sims[self.identity_idx, self.labels] + image_group_sims[self.identity_idx, self.labels].max()
+            text_group_sims[self.identity_idx, self.labels] = text_group_sims[self.identity_idx, self.labels] - text_group_sims[self.identity_idx, self.labels] + text_group_sims[self.identity_idx, self.labels].max()
             logits_per_image = logit_scale * image_group_sims.sum(-1)
             logits_per_text = logit_scale * text_group_sims.sum(-1)
+            """
+            # TODO: Balancing Loss?
+            image_probs = image_group_sims.softmax(dim=1)
+            cropped_image_sims = image_group_sims[:, self.labels.min():self.labels.max()+1, :]
+            correct_image_probs = cropped_image_sims.diagonal(0, 0, 1).t()
+            # This is now LBS x groups
+            # print("CP shape:", correct_image_probs.shape)
+            best_image_models = correct_image_probs.argmax(1)
+            logits_per_image = logit_scale * image_group_sims[self.identity_idx, :, best_image_models]
+
+            text_probs = text_group_sims.softmax(dim=1)
+            cropped_text_sims = text_group_sims[:, self.labels.min():self.labels.max()+1, :]
+            correct_text_probs = cropped_text_sims.diagonal(0, 0, 1).t()
+            # This is now LBS x groups
+            # print("CP shape:", correct_text_probs.shape)
+            best_text_models = correct_text_probs.argmax(1)
+            logits_per_text = logit_scale * text_group_sims[self.identity_idx, :, best_text_models]
+
+            # Now want to sample as I thought was [self.identity_idx, self.labels] but it's actually fancy
+            # Maybe masked selct (also b/c have fixed selection for each module)
+            # once I do that should have LBS x g
+            # Then get the argmax across last dimension
+            # then index select image _Group sims from that *AND HIT WITH LOGIT SCALE*
         else:
             # the below line doesn't do anything in normal case but flattens
             # in multimodel case
