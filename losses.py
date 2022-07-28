@@ -200,22 +200,35 @@ class CLIPLoss(nn.Module):
             logits_per_text = logit_scale * text_group_sims.sum(-1)
             """
             # TODO: Balancing Loss?
+            print(1)
             image_probs = image_group_sims.softmax(dim=1)
-            cropped_image_sims = image_group_sims[:, self.labels.min():self.labels.max()+1, :]
-            correct_image_probs = cropped_image_sims.diagonal(0, 0, 1).t()
+            print(2)
+            print(image_prob.shape, image_group_sims.shape); asdf
+            cropped_image_probs = image_probs[:, self.labels.min():self.labels.max()+1, :]
+            print(3)
+            correct_image_probs = cropped_image_probs.diagonal(0, 0, 1).t()
+            print(4)
             # This is now LBS x groups
             # print("CP shape:", correct_image_probs.shape)
             best_image_models = correct_image_probs.argmax(1)
+            print(5)
             logits_per_image = logit_scale * image_group_sims[self.identity_idx, :, best_image_models]
-
+            print(6)
             text_probs = text_group_sims.softmax(dim=1)
-            cropped_text_sims = text_group_sims[:, self.labels.min():self.labels.max()+1, :]
-            correct_text_probs = cropped_text_sims.diagonal(0, 0, 1).t()
+            cropped_text_probs = text_probs[:, self.labels.min():self.labels.max()+1, :]
+            correct_text_probs = cropped_text_probs.diagonal(0, 0, 1).t()
             # This is now LBS x groups
             # print("CP shape:", correct_text_probs.shape)
             best_text_models = correct_text_probs.argmax(1)
             logits_per_text = logit_scale * text_group_sims[self.identity_idx, :, best_text_models]
 
+            total_model_image_accs = correct_image_probs.mean(0)
+            print(total_model_image_accs)
+            image_entropy = (-1 * total_model_image_accs * total_model_image_accs.log() ).mean()
+            total_model_text_accs = correct_text_probs.mean(0)
+            print(total_model_text_accs)
+            text_entropy = (-1 * total_model_text_accs * total_model_text_accs.log() ).mean()
+            print(image_entropy, text_entropy)
             # Now want to sample as I thought was [self.identity_idx, self.labels] but it's actually fancy
             # Maybe masked selct (also b/c have fixed selection for each module)
             # once I do that should have LBS x g
