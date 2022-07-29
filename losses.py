@@ -124,7 +124,8 @@ class CLIPLoss(nn.Module):
         self.use_text_unif_loss = use_text_unif_loss
         self.unif_scale = unif_scale
         self.num_normalization_groupings = num_normalization_groupings
-        if expert_loss: assert num_normalization_groupings
+        if expert_loss:
+            assert num_normalization_groupings
         self.expert_loss = expert_loss
 
     def forward(self, outputs):
@@ -138,6 +139,7 @@ class CLIPLoss(nn.Module):
             self.labels = local_batch_size * get_rank() + self.identity_idx
             self.last_local_batch_size = local_batch_size
             self.group_id_mat = torch.eye(self.num_normalization_groupings, device=image_embed.device)
+            self.top_k = 5
 
         # normalized features
 
@@ -200,36 +202,49 @@ class CLIPLoss(nn.Module):
             logits_per_image = logit_scale * image_group_sims.sum(-1)
             logits_per_text = logit_scale * text_group_sims.sum(-1)
             """
-            # TODO: Balancing Loss?
             image_probs = image_group_sims.softmax(dim=1)
             cropped_image_probs = image_probs.index_select(1, self.labels)
             correct_image_probs = cropped_image_probs.diagonal(0, 0, 1).t()
             # This is now LBS x groups
-            best_image_models = correct_image_probs.argmax(1)
             text_probs = text_group_sims.softmax(dim=1)
             # This should be ok b/c same every time?
             cropped_text_probs = text_probs.index_select(1, self.labels)
             correct_text_probs = cropped_text_probs.diagonal(0, 0, 1).t()
             # This is now LBS x groups
-            # print("CP shape:", correct_text_probs.shape)
-            best_text_models = correct_text_probs.argmax(1)
-            # This is probably issue b/c shifting around
+            # could just softmax, worried that would make all train equally, want some amount of explicit in here
+            # top k would give LBS x k
+            # flatten and then selections are LBS*k x g where each is onehot
+            # view as LBS x k x g and sum along 1 (keeping dim) yielding LBS x 1 x G
+
+            ####### PREV TOP 1 VERSION ######
+            # best_image_models = correct_image_probs.argmax(1)
+            # best_text_models = correct_text_probs.argmax(1)
+            # image_selections = self.group_id_mat.index_select(0, best_image_models).unsqueeze(1) # selections are LBS x 1 x G now
+            # text_selections = self.group_id_mat.index_select(0, best_text_models).unsqueeze(1) # selections are LBS x 1 x G now
+            ###############
+
+            ##### TRYING NEW TOPk ######
+            topk_image_models = correct_image_probs.topk(self.top_k, 1).indices.flatten() # this will be LBS k vecs catted
+            image_selections = self.group_id_mat.index_select(0, topk_image_models) # this is LBS*k x G 
+            image_selections = image_selections.view(local_batch_size, self.top_k,
+                                                        self.num_normalization_groupings).sum(1, keepdim=True)
+            topk_text_models = correct_text_probs.topk(self.top_k, 1).indices.flatten() # this will be LBS k vecs catted
+            text_selections = self.group_id_mat.index_select(0, topk_text_models) # this is LBS*k x G 
+            text_selections = text_selections.view(local_batch_size, self.top_k,
+                                                        self.num_normalization_groupings).sum(1, keepdim=True)
+            #########
+
             # text_group_sims is LBS x BS x G
-            # Want to make into masking thing? That still might not work
-            image_selections = self.group_id_mat.index_select(0, best_image_models).unsqueeze(1) # selections are LBS x 1 x G now
             logits_per_image = logit_scale * (image_group_sims * image_selections).sum(-1)
-            text_selections = self.group_id_mat.index_select(0, best_text_models).unsqueeze(1) # selections are LBS x 1 x G now
             logits_per_text = logit_scale * (text_group_sims * text_selections).sum(-1)
             # logits_per_image = logit_scale * image_group_sims[self.identity_idx, :, best_image_models]
             # logits_per_text = logit_scale * text_group_sims[self.identity_idx, :, best_text_models]
-            """
+
+
             total_model_image_accs = correct_image_probs.mean(0)
-            # print(total_model_image_accs)
             image_entropy = (-1 * total_model_image_accs * total_model_image_accs.log() ).mean()
             total_model_text_accs = correct_text_probs.mean(0)
-            # print(total_model_text_accs)
             text_entropy = (-1 * total_model_text_accs * total_model_text_accs.log() ).mean()
-            """
             negative_entropy_loss = -1 *(image_entropy + text_entropy) / 2
             # Now want to sample as I thought was [self.identity_idx, self.labels] but it's actually fancy
             # Maybe masked selct (also b/c have fixed selection for each module)
