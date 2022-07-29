@@ -219,6 +219,8 @@ def train():
         model = slip_models.VisionParallelTextStandard(cfg.num_models, cfg.embed_dim // cfg.num_models)
     elif cfg.use_mobilenet:
         model = slip_models.CLIP_MobileNetV3Small()
+    elif cfg.use_resnet18:
+        model = slip_models.CLIP_ResNet18()
     else:
         model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)
     if is_xla():
@@ -330,6 +332,7 @@ def train():
             with torch.cuda.amp.autocast(enabled=scaler is not None):
                 output = model(img, txt, return_logit_scale=return_logit_scale)
                 loss = loss_fn(output)
+                # loss = output['image_embed'].pow(2).sum() # dummy loss
             # backward pass
             if scaler is not None:
                 scaler.scale(loss).backward()

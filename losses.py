@@ -111,6 +111,8 @@ def two_arr_pdist(a, b, p=2):
     return (a[:, None] - b).norm(dim=2, p=p).flatten()
 
 
+
+
 class CLIPLoss(nn.Module):
     def __init__(self, use_image_unif_loss=False, use_text_unif_loss=False,
                   unif_scale=0.1, num_normalization_groupings=0,
@@ -135,8 +137,7 @@ class CLIPLoss(nn.Module):
             self.identity_idx = torch.arange(local_batch_size, device=image_embed.device)
             self.labels = local_batch_size * get_rank() + self.identity_idx
             self.last_local_batch_size = local_batch_size
-            self.base_mask_tensor = torch.eye(local_batch_size, device=image_embed.device,
-                                                dtype=torch.bool)
+            self.group_id_mat = torch.eye(self.num_normalization_groupings, device=image_embed.device)
 
         # normalized features
 
@@ -200,28 +201,36 @@ class CLIPLoss(nn.Module):
             logits_per_text = logit_scale * text_group_sims.sum(-1)
             """
             # TODO: Balancing Loss?
-            print(1)
+            # print(1)
             image_probs = image_group_sims.softmax(dim=1)
-            print(2)
-            print(image_prob.shape, image_group_sims.shape); asdf
-            cropped_image_probs = image_probs[:, self.labels.min():self.labels.max()+1, :]
-            print(3)
+            # print(2)
+            # print(image_probs.shape, image_group_sims.shape)
+            cropped_image_probs = image_probs.index_select(1, self.labels)
+            # print(3)
             correct_image_probs = cropped_image_probs.diagonal(0, 0, 1).t()
-            print(4)
+            # print(4)
             # This is now LBS x groups
             # print("CP shape:", correct_image_probs.shape)
             best_image_models = correct_image_probs.argmax(1)
-            print(5)
-            logits_per_image = logit_scale * image_group_sims[self.identity_idx, :, best_image_models]
-            print(6)
+            # print(5)
+            # print(6)
             text_probs = text_group_sims.softmax(dim=1)
-            cropped_text_probs = text_probs[:, self.labels.min():self.labels.max()+1, :]
+            # This should be ok b/c same every time?
+            cropped_text_probs = text_probs.index_select(1, self.labels)
             correct_text_probs = cropped_text_probs.diagonal(0, 0, 1).t()
             # This is now LBS x groups
             # print("CP shape:", correct_text_probs.shape)
             best_text_models = correct_text_probs.argmax(1)
-            logits_per_text = logit_scale * text_group_sims[self.identity_idx, :, best_text_models]
-
+            # This is probably issue b/c shifting around
+            # text_group_sims is LBS x BS x G
+            # Want to make into masking thing? That still might not work
+            image_selections = self.group_id_mat.index_select(0, best_image_models).unsqueeze(1) # selections are LBS x 1 x G now
+            logits_per_image = logit_scale * (image_group_sims * image_selections).sum(-1)
+            text_selections = self.group_id_mat.index_select(0, best_text_models).unsqueeze(1) # selections are LBS x 1 x G now
+            logits_per_text = logit_scale * (text_group_sims * text_selections).sum(-1)
+            # logits_per_image = logit_scale * image_group_sims[self.identity_idx, :, best_image_models]
+            # logits_per_text = logit_scale * text_group_sims[self.identity_idx, :, best_text_models]
+            """
             total_model_image_accs = correct_image_probs.mean(0)
             print(total_model_image_accs)
             image_entropy = (-1 * total_model_image_accs * total_model_image_accs.log() ).mean()
@@ -229,6 +238,7 @@ class CLIPLoss(nn.Module):
             print(total_model_text_accs)
             text_entropy = (-1 * total_model_text_accs * total_model_text_accs.log() ).mean()
             print(image_entropy, text_entropy)
+            """
             # Now want to sample as I thought was [self.identity_idx, self.labels] but it's actually fancy
             # Maybe masked selct (also b/c have fixed selection for each module)
             # once I do that should have LBS x g
