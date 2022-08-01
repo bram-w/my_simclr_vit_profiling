@@ -223,6 +223,7 @@ class CLIPLoss(nn.Module):
             # text_selections = self.group_id_mat.index_select(0, best_text_models).unsqueeze(1) # selections are LBS x 1 x G now
             ###############
 
+            """
             ##### TRYING NEW TOPk ######
             topk_image_models = correct_image_probs.topk(self.top_k, 1).indices.flatten() # this will be LBS k vecs catted
             image_selections = self.group_id_mat.index_select(0, topk_image_models) # this is LBS*k x G 
@@ -232,20 +233,60 @@ class CLIPLoss(nn.Module):
             text_selections = self.group_id_mat.index_select(0, topk_text_models) # this is LBS*k x G 
             text_selections = text_selections.view(local_batch_size, self.top_k,
                                                         self.num_normalization_groupings).sum(1, keepdim=True)
-            #########
-
-            # text_group_sims is LBS x BS x G
             logits_per_image = logit_scale * (image_group_sims * image_selections).sum(-1)
             logits_per_text = logit_scale * (text_group_sims * text_selections).sum(-1)
-            # logits_per_image = logit_scale * image_group_sims[self.identity_idx, :, best_image_models]
-            # logits_per_text = logit_scale * text_group_sims[self.identity_idx, :, best_text_models]
+            #########
+            """
 
+            # text_group_sims is LBS x BS x G
+            # correct probs is LBS x G
+            # Ultimately going to take Xent of LBS x BS
+            # want weighted sum contributions 
+            # Run loss separately on each model but don't reduce until take average?
+            """
+            So make sims LBS x G X BS , correct probsl LBS x G
+            View both as LBS*G (x BS for sims)
+            Take Xent loss without reduction to get LBS*G
+                    Against repeated version of targets
+            Normal reduction is mean, I think that's still fine *IF YOU SOFTMAX CORRECT PROBS*
+            So BEFORE flattening correct probs take osftmax along last dim and then mult by g
+            Then can just proudct and mean ave vecootors
+            """
+            group_t = 10
+            correct_image_probs = self.num_normalization_groupings * (correct_image_probs*group_t).softmax(dim=-1)
+            correct_text_probs = self.num_normalization_groupings * (correct_text_probs*group_t).softmax(dim=-1)
 
+            print(correct_text_probs, correct_image_probs)
+            # print(image_group_sims.shape, image_group_sims.swapaxes(2, 1).shape, local_batch_size,
+            #         self.num_normalization_groupings)
+            # image_logits = image_group_sims.swapaxes(2, 1).view(local_batch_size*self.num_normalization_groupings,
+            #                                                         -1)
+            image_logits = image_group_sims.swapaxes(2, 1).flatten(start_dim=0, end_dim=1)
+            image_cross_entropy = F.cross_entropy(logit_scale * image_logits,
+                                                    self.labels.repeat(self.num_normalization_groupings),
+                                                    reduction='none')
+            image_weighted_cross_entropy = image_cross_entropy * correct_image_probs.flatten()
+            image_loss = image_weighted_cross_entropy.mean()
+
+            # text_logits = text_group_sims.swapaxes(2, 1).view(local_batch_size*self.num_normalization_groupings,
+            #                                                         -1)
+            text_logits = text_group_sims.swapaxes(2, 1).flatten(start_dim=0, end_dim=1)
+            text_cross_entropy = F.cross_entropy(logit_scale * text_logits,
+                                                    self.labels.repeat(self.num_normalization_groupings),
+                                                    reduction='none')
+            text_weighted_cross_entropy = text_cross_entropy * correct_text_probs.flatten()
+            text_loss = text_weighted_cross_entropy.mean()
+
+            clip_loss = (image_loss + text_loss) / 2
+
+            """
             total_model_image_accs = correct_image_probs.mean(0)
             image_entropy = (-1 * total_model_image_accs * total_model_image_accs.log() ).mean()
             total_model_text_accs = correct_text_probs.mean(0)
             text_entropy = (-1 * total_model_text_accs * total_model_text_accs.log() ).mean()
             negative_entropy_loss = -1 *(image_entropy + text_entropy) / 2
+            """
+            negative_entropy_loss = 0
             # Now want to sample as I thought was [self.identity_idx, self.labels] but it's actually fancy
             # Maybe masked selct (also b/c have fixed selection for each module)
             # once I do that should have LBS x g
@@ -263,9 +304,8 @@ class CLIPLoss(nn.Module):
             logits_per_text = logit_scale * text_embed @ image_embed_all.t()
             negative_entropy_loss = 0
         
-        # print(logits_per_image.min(), logits_per_image.max())
-        clip_loss = (F.cross_entropy(logits_per_image, self.labels) + \
-            F.cross_entropy(logits_per_text, self.labels)) / 2
+            clip_loss = (F.cross_entropy(logits_per_image, self.labels) + \
+                F.cross_entropy(logits_per_text, self.labels)) / 2
         # print(clip_loss)
         # blocking/indenting this for legibility
         if self.use_text_unif_loss:

@@ -50,6 +50,18 @@ def vision_binary_call():
     net.classifier[2].p = 0
     return net
 
+
+class MultiResNet(nn.Module):
+
+    def __init__(self, num_models=64, output_dim_per_model=64):
+        super().__init__()
+        self.model_list = nn.ModuleList([resnet18(num_classes=output_dim_per_model) for _ in range(num_models)])
+
+    def forward(self, x):
+        # this is raw logits, should sigmoid or tanh
+        return torch.cat([m(x) for m in self.model_list], dim=1)
+
+
 class MultiBinaryVision(nn.Module):
 
     def __init__(self, num_models=64):
@@ -92,6 +104,16 @@ def VisionParallelTextStandard(num_models, output_dim_per_model):
     clip_model.image_projection.data = torch.eye(embed_dim)
     clip_model.image_projection.requires_grad = False
     return clip_model
+
+def VisionMultiResNetTextStandard(num_models, output_dim_per_model):
+    embed_dim = num_models * output_dim_per_model
+    viz_model = MultiResNet(num_models, output_dim_per_model)
+    clip_model =  CLIP(embed_dim, embed_dim, viz_model, 77, vocab_size=49408,
+                        transformer_width=512, transformer_heads=8, transformer_layers=12)
+    clip_model.image_projection.data = torch.eye(embed_dim)
+    clip_model.image_projection.requires_grad = False
+    return clip_model
+
 
 
 def VisionStandardTextParallel():

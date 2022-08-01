@@ -216,7 +216,8 @@ def train():
         # model = slip_models.MultiBinaryCLIP(num_models=cfg.embed_dim)
         # model = slip_models.ParallelMultiBinaryCLIP(num_models=cfg.embed_dim)
         # model = slip_models.VisionStandardTextParallel()
-        model = slip_models.VisionParallelTextStandard(cfg.num_models, cfg.embed_dim // cfg.num_models)
+        # model = slip_models.VisionParallelTextStandard(cfg.num_models, cfg.embed_dim // cfg.num_models)
+        model = slip_models.VisionMultiResNetTextStandard(cfg.num_models, cfg.embed_dim // cfg.num_models)
     elif cfg.use_mobilenet:
         model = slip_models.CLIP_MobileNetV3Small()
     elif cfg.use_resnet18:
