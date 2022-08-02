@@ -204,12 +204,16 @@ class CLIPLoss(nn.Module):
             """
             image_probs = image_group_sims.softmax(dim=1)
             cropped_image_probs = image_probs.index_select(1, self.labels)
-            correct_image_probs = cropped_image_probs.diagonal(0, 0, 1).t()
+            # correct_image_probs = cropped_image_probs.diagonal(0, 0, 1).t()
+            correct_image_probs = cropped_image_probs.flatten(0,1).index_select(0, (local_batch_size+1)*self.identity_idx)
+            # correct_image_probs = cropped_image_probs[0]
             # This is now LBS x groups
             text_probs = text_group_sims.softmax(dim=1)
             # This should be ok b/c same every time?
             cropped_text_probs = text_probs.index_select(1, self.labels)
-            correct_text_probs = cropped_text_probs.diagonal(0, 0, 1).t()
+            correct_text_probs = cropped_text_probs.flatten(0,1).index_select(0, (local_batch_size+1)*self.identity_idx)
+            # correct_text_probs = cropped_text_probs[0]
+            # correct_text_probs = cropped_text_probs.diagonal(0, 0, 1).t()
             # This is now LBS x groups
             # could just softmax, worried that would make all train equally, want some amount of explicit in here
             # top k would give LBS x k
@@ -256,7 +260,7 @@ class CLIPLoss(nn.Module):
             correct_image_probs = self.num_normalization_groupings * (correct_image_probs*group_t).softmax(dim=-1)
             correct_text_probs = self.num_normalization_groupings * (correct_text_probs*group_t).softmax(dim=-1)
 
-            print(correct_text_probs, correct_image_probs)
+            # print(correct_text_probs, correct_image_probs)
             # print(image_group_sims.shape, image_group_sims.swapaxes(2, 1).shape, local_batch_size,
             #         self.num_normalization_groupings)
             # image_logits = image_group_sims.swapaxes(2, 1).view(local_batch_size*self.num_normalization_groupings,
