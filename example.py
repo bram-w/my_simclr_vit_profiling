@@ -14,8 +14,7 @@ import torchvision.transforms as T
 
 # import clip_config as config
 import config
-from losses import SimCLRLoss, IsolaCLIPLoss, CLIPLoss, BarlowTwinsLoss
-from models import SimCLRViTModel
+from losses import CLIPLoss
 from distributed import (
     get_world_size,
     get_rank,
