@@ -14,7 +14,7 @@ import torchvision.transforms as T
 
 # import clip_config as config
 import config
-from losses import SimCLRLoss, CLIPLoss
+from losses import CLIPLoss
 from models import SimCLRViTModel
 from distributed import (
     get_world_size,
@@ -103,7 +103,7 @@ def load_training_data():
                         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                     ]
                         )
-    num_dataset_instances = xm.xrt_world_size() * cfg.num_workers
+    num_dataset_instances = get_world_size() * cfg.num_workers
     epoch_size = train_dataset_len // num_dataset_instances
 
     train_shards = "/export/home/bwallace/cc12m_shards/cc12m-{000000..009819}.tar"
@@ -125,7 +125,7 @@ def load_training_data():
     # train_loader = train_loader.with_length(epoch_size) # adds `__len__` method to dataloader
 
     train_sampler = None
-    synchronize()
+    if is_xla(): synchronize()
     master_print("data loading done!")
 
     return train_dataset, train_loader, train_sampler
@@ -204,10 +204,10 @@ def train():
     batch_size = cfg.batch_size
     num_epochs = cfg.num_epochs
     assert batch_size % get_world_size() == 0
-    if is_xla():
+    if True: # if is_xla():
         train_dataset, train_loader, train_sampler = load_training_data()
-    else:
-        train_dataset, train_loader, train_sampler = load_training_data_cuda()
+    # else:
+    #     train_dataset, train_loader, train_sampler = load_training_data_cuda()
     model = slip_models.CLIP_VITB16()
     if is_xla():
         device = xm.xla_device()
