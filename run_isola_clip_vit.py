@@ -351,7 +351,7 @@ def train():
                 optimizer.step()
             lr_scheduler.step()
 
-            # with torch.no_grad(): model.logit_scale.data.clamp_(0, 4.6052)
+            with torch.no_grad(): model.logit_scale.data.clamp_(0, 4.6052)
 
             if (step+1 ) % cfg.log_step_interval == 0 or step==0:
                 lr = optimizer.param_groups[0]["lr"]
