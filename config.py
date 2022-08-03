@@ -47,8 +47,8 @@ cfg.use_resnet18 = False
 # --------------------------------------------------------------------------- #
 # training options
 # --------------------------------------------------------------------------- #
-cfg.batch_size = 4096
-cfg.lr = 5e-4
+cfg.batch_size = 512
+cfg.lr = 6e-5
 cfg.weight_decay = 0.5
 cfg.num_epochs = 35
 cfg.warmup_epochs = 1
