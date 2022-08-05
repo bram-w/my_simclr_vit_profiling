@@ -202,7 +202,7 @@ class CLIPLoss(nn.Module):
             logits_per_image = logit_scale * image_group_sims.sum(-1)
             logits_per_text = logit_scale * text_group_sims.sum(-1)
             """
-            image_probs = image_group_sims.softmax(dim=1)
+            image_probs = image_group_sims.softmax(dim=1) # this could be unstable?
             cropped_image_probs = image_probs.index_select(1, self.labels)
             # correct_image_probs = cropped_image_probs.diagonal(0, 0, 1).t()
             correct_image_probs = cropped_image_probs.flatten(0,1).index_select(0, (local_batch_size+1)*self.identity_idx)
@@ -265,18 +265,18 @@ class CLIPLoss(nn.Module):
             #         self.num_normalization_groupings)
             # image_logits = image_group_sims.swapaxes(2, 1).view(local_batch_size*self.num_normalization_groupings,
             #                                                         -1)
-            image_logits = image_group_sims.swapaxes(2, 1).flatten(start_dim=0, end_dim=1)
+            image_logits = image_group_sims.swapaxes(2, 1).flatten(start_dim=0, end_dim=1) # LBS*G x BS
             image_cross_entropy = F.cross_entropy(logit_scale * image_logits,
-                                                    self.labels.repeat(self.num_normalization_groupings),
+                                                    self.labels.repeat_interleave(self.num_normalization_groupings),
                                                     reduction='none')
-            image_weighted_cross_entropy = image_cross_entropy * correct_image_probs.flatten()
+            image_weighted_cross_entropy = image_cross_entropy *  correct_image_probs.flatten()
             image_loss = image_weighted_cross_entropy.mean()
 
             # text_logits = text_group_sims.swapaxes(2, 1).view(local_batch_size*self.num_normalization_groupings,
             #                                                         -1)
             text_logits = text_group_sims.swapaxes(2, 1).flatten(start_dim=0, end_dim=1)
             text_cross_entropy = F.cross_entropy(logit_scale * text_logits,
-                                                    self.labels.repeat(self.num_normalization_groupings),
+                                                    self.labels.repeat_interleave(self.num_normalization_groupings),
                                                     reduction='none')
             text_weighted_cross_entropy = text_cross_entropy * correct_text_probs.flatten()
             text_loss = text_weighted_cross_entropy.mean()
