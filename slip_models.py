@@ -105,11 +105,22 @@ def VisionParallelTextStandard(num_models, output_dim_per_model):
     clip_model.image_projection.requires_grad = False
     return clip_model
 
-def VisionMultiResNetTextStandard(num_models, output_dim_per_model):
+def VisionMultiResNetTextStandard(num_models, output_dim_per_model,
+                                 large_text_model=False):
     embed_dim = num_models * output_dim_per_model
     viz_model = MultiResNet(num_models, output_dim_per_model)
-    clip_model =  CLIP(embed_dim, embed_dim, viz_model, 77, vocab_size=49408,
-                        transformer_width=512, transformer_heads=8, transformer_layers=12)
+    if large_text_model:
+        clip_model =  CLIP(embed_dim, embed_dim,
+                           viz_model, 77, vocab_size=49408,
+                            transformer_width=1024,
+                           transformer_heads=16,
+                           transformer_layers=12)
+    else:
+        clip_model =  CLIP(embed_dim, embed_dim,
+                           viz_model, 77, vocab_size=49408,
+                            transformer_width=512,
+                           transformer_heads=8,
+                           transformer_layers=12)
     clip_model.image_projection.data = torch.eye(embed_dim)
     clip_model.image_projection.requires_grad = False
     return clip_model
@@ -432,11 +443,27 @@ def CLIP_MobileNetV3Small(embed_dim=512, **kwargs):
     return model
 
 
-def CLIP_ResNet18(embed_dim=512, **kwargs):
+def CLIP_ResNet18(embed_dim=512, 
+                   large_text_model=False,
+                  **kwargs):
     vision_model = resnet18(num_classes=1)
     vision_model.fc = torch.nn.Identity()
-    model = CLIP(embed_dim=embed_dim, vision_width=512, vision_model=vision_model, context_length=77, vocab_size=49408,
-        transformer_width=512, transformer_heads=8, transformer_layers=12, **kwargs)
+    if large_text_model:
+        model = CLIP(embed_dim=embed_dim, vision_width=512,
+                     vision_model=vision_model, context_length=77,
+                     vocab_size=49408,
+                     transformer_width=1024,
+                     transformer_heads=16,
+                     transformer_layers=12,
+                     **kwargs)
+    else:
+        model = CLIP(embed_dim=embed_dim, vision_width=512,
+                     vision_model=vision_model, context_length=77,
+                     vocab_size=49408,
+                     transformer_width=512,
+                     transformer_heads=8,
+                     transformer_layers=12,
+                     **kwargs)
     return model
 
 

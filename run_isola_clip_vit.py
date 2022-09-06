@@ -212,17 +212,22 @@ def train():
     # else:
     #     train_dataset, train_loader, train_sampler = load_training_data_cuda()
     assert not (cfg.num_models and cfg.use_mobilenet)
-    if cfg.num_models:
+    if cfg.num_models and cfg.use_resnet18:
         # model = slip_models.MultiBinaryCLIP(num_models=cfg.embed_dim)
         # model = slip_models.ParallelMultiBinaryCLIP(num_models=cfg.embed_dim)
         # model = slip_models.VisionStandardTextParallel()
         # model = slip_models.VisionParallelTextStandard(cfg.num_models, cfg.embed_dim // cfg.num_models)
-        model = slip_models.VisionMultiResNetTextStandard(cfg.num_models, cfg.embed_dim // cfg.num_models)
+        model = slip_models.VisionMultiResNetTextStandard(cfg.num_models,
+                                                          cfg.embed_dim // cfg.num_models,
+                                                         large_text_model=cfg.large_text_model)
+    elif cfg.num_models:
+        model = slip_models.VisionParallelTextStandard(cfg.num_models, cfg.embed_dim // cfg.num_models)
     elif cfg.use_mobilenet:
         model = slip_models.CLIP_MobileNetV3Small()
     elif cfg.use_resnet18:
-        model = slip_models.CLIP_ResNet18()
+        model = slip_models.CLIP_ResNet18(large_text_model=cfg.large_text_model)
     else:
+        assert not cfg.large_text_model
         model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)
     if is_xla():
         device = xm.xla_device()
@@ -277,7 +282,9 @@ def train():
                            use_text_unif_loss=cfg.isola_unif_scale,
                            unif_scale=cfg.isola_unif_scale,
                            num_normalization_groupings=cfg.num_models,
-                           expert_loss=cfg.expert_loss
+                           expert_loss=cfg.expert_loss,
+                           single_text_target=cfg.single_text_target,
+                           group_t=cfg.group_t
                            )
     # if is_master():
     #     os.makedirs(cfg.ckpt_dir, exist_ok=True)
@@ -351,7 +358,11 @@ def train():
                 optimizer.step()
             lr_scheduler.step()
 
-            with torch.no_grad(): model.logit_scale.data.clamp_(0, 4.6052)
+            with torch.no_grad():
+                if hasattr(model, 'module'):
+                    model.module.logit_scale.data.clamp_(0, 4.6052)
+                else:
+                    model.logit_scale.data.clamp_(0, 4.6052)
 
             if (step+1 ) % cfg.log_step_interval == 0 or step==0:
                 lr = optimizer.param_groups[0]["lr"]

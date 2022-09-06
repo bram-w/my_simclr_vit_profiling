@@ -116,7 +116,8 @@ def two_arr_pdist(a, b, p=2):
 class CLIPLoss(nn.Module):
     def __init__(self, use_image_unif_loss=False, use_text_unif_loss=False,
                   unif_scale=0.1, num_normalization_groupings=0,
-                  expert_loss=False):
+                  expert_loss=False, single_text_target=False,
+                  group_t=10):
         super().__init__()
         self.labels = None
         self.last_local_batch_size = None
@@ -126,7 +127,9 @@ class CLIPLoss(nn.Module):
         self.num_normalization_groupings = num_normalization_groupings
         if expert_loss:
             assert num_normalization_groupings
+        self.single_text_target = single_text_target
         self.expert_loss = expert_loss
+        self.group_t = group_t
 
     def forward(self, outputs):
         image_embed = outputs['image_embed']
@@ -147,9 +150,15 @@ class CLIPLoss(nn.Module):
             image_embed = image_embed.view(local_batch_size,
                                             self.num_normalization_groupings,
                                             -1)
-            text_embed = text_embed.view(local_batch_size,
-                                            self.num_normalization_groupings,
-                                            -1)
+            if self.single_text_target:
+                # Hacky, but just going to take first d dimensions of text embed so don't have to edit CLIP
+                # architecture
+                expert_d = image_embed.shape[-1]
+                text_embed = text_embed[:,:expert_d].unsqueeze(1).repeat(1, self.num_normalization_groupings, 1)
+            else:
+                text_embed = text_embed.view(local_batch_size,
+                                                self.num_normalization_groupings,
+                                                -1)
         image_embed = F.normalize(image_embed, dim=-1, p=2)
         text_embed = F.normalize(text_embed, dim=-1, p=2)
 
@@ -256,9 +265,8 @@ class CLIPLoss(nn.Module):
             So BEFORE flattening correct probs take osftmax along last dim and then mult by g
             Then can just proudct and mean ave vecootors
             """
-            group_t = 10
-            correct_image_probs = self.num_normalization_groupings * (correct_image_probs*group_t).softmax(dim=-1)
-            correct_text_probs = self.num_normalization_groupings * (correct_text_probs*group_t).softmax(dim=-1)
+            correct_image_probs = self.num_normalization_groupings * (correct_image_probs*self.group_t).softmax(dim=-1)
+            correct_text_probs = self.num_normalization_groupings * (correct_text_probs*self.group_t).softmax(dim=-1)
 
             # print(correct_text_probs, correct_image_probs)
             # print(image_group_sims.shape, image_group_sims.swapaxes(2, 1).shape, local_batch_size,

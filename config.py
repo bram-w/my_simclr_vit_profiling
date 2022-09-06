@@ -44,6 +44,7 @@ cfg.simclr_loss_temperature = 0.1
 cfg.multi_binary_model = False
 cfg.use_mobilenet = False
 cfg.use_resnet18 = False
+cfg.large_text_model = False
 # --------------------------------------------------------------------------- #
 # training options
 # --------------------------------------------------------------------------- #
@@ -86,7 +87,9 @@ cfg.no_spawn = False
 cfg.isola_align_scale = 0.0
 cfg.isola_unif_scale = 0.0
 cfg.expert_loss = False
+cfg.group_t = 10
 cfg.barlow_twins_loss = False
+cfg.single_text_target = False
 # --------------------------------------------------------------------------- #
 # --------------------------------------------------------------------------- #
 
