@@ -215,12 +215,23 @@ class CLIPLoss(nn.Module):
             cropped_image_probs = image_probs.index_select(1, self.labels)
             # correct_image_probs = cropped_image_probs.diagonal(0, 0, 1).t()
             correct_image_probs = cropped_image_probs.flatten(0,1).index_select(0, (local_batch_size+1)*self.identity_idx)
+
             # correct_image_probs = cropped_image_probs[0]
             # This is now LBS x groups
             text_probs = text_group_sims.softmax(dim=1)
             # This should be ok b/c same every time?
             cropped_text_probs = text_probs.index_select(1, self.labels)
             correct_text_probs = cropped_text_probs.flatten(0,1).index_select(0, (local_batch_size+1)*self.identity_idx)
+
+
+            # if these predictions are uniform than all of them
+            # here are 
+            BS = image_embed_all.size(0)
+            noise_scale = 0.1 * (1 / BS)
+            # doing same noise for image and text
+            noise = noise_scale * torch.rand_like(correct_image_probs)
+            correct_image_probs += noise
+            correct_text_probs += noise
             # correct_text_probs = cropped_text_probs[0]
             # correct_text_probs = cropped_text_probs.diagonal(0, 0, 1).t()
             # This is now LBS x groups

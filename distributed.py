@@ -307,8 +307,44 @@ def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler,
         ckpt = torch.load(ckpt_path, map_location="cpu")
     else:
         ckpt = torch.load(ckpt_path, map_location=f"cuda:{cfg.device_id}")
-
-    model.load_state_dict(ckpt["model"])
+    try:
+        model.load_state_dict(ckpt["model"])
+    except:
+        # just assuming that it's b/c of list for now, lazy
+        new_dict = {}
+        num_models = len(model.visual.model_list) if is_xla() else len(model.module.visual.model_list)
+        for k,v in ckpt["model"].items():
+            if 'image_projection' in k:
+                current_image_projection = model.image_projection if is_xla() else model.module.image_projection
+                dim = current_image_projection.shape[0]
+                new_v = torch.eye(dim).to(v.device)
+                new_dict[k] = new_v
+                k_prefix_template = ('' if is_xla() else 'module.') + 'visual.model_list.{}.fc'
+                for i in range(num_models):
+                    new_dict[k_prefix_template.format(i) + '.weight'] = v.T
+                    new_dict[k_prefix_template.format(i) + '.bias'] = torch.zeros(dim//num_models).to(v.device)
+            elif 'text_projection' in k:
+                new_v = v.repeat(1, num_models)
+                new_dict[k] = new_v
+            elif '.visual.' not in k:
+                new_dict[k] = v
+            else:
+                # assuming it's from list
+                ks = [k.replace('visual', f'visual.model_list.{i}') for i in range(num_models)]
+                for new_k in ks:
+                    new_dict[new_k] = v
+        # image and text projection are off
+        # image projection just needs to be identity but iwth current dim
+        """
+        # only remaining problem is that we have fcs
+        # module.visual.model_list.0.fc.weight/bias
+        # below would solve using random init
+        curr_sd = model.state_dict()
+        for i in range(num_models):
+            k_prefix = ('' if is_xla() else 'module.') + f'visual.model_list.{i}')
+            new_dict
+        """
+        model.load_state_dict(new_dict)
     if not load_model_ckpt_only:
         optimizer.load_state_dict(ckpt["optimizer"])
         lr_scheduler.load_state_dict(ckpt["lr_scheduler"])

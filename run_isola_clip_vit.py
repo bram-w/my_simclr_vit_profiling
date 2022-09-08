@@ -303,15 +303,15 @@ def train():
                 if os.path.exists(try_path):
                     resume_ckpt_path = try_path
         else:
-            assert os.path.exists(cfg.resume_ckpt_file)
-            resume_ckpt_path = cfg.resume_ckpt_file
+            assert os.path.exists(cfg.resume_ckpt_path)
+            resume_ckpt_path = cfg.resume_ckpt_path
     elif cfg.pretrained_text_ckpt:
         load_text_model_ckpt(cfg.pretrained_text_ckpt, model)
 
     if resume_ckpt_path is not None:
         meta_data = load_ckpt(resume_ckpt_path, model, optimizer, lr_scheduler, scaler,
                             load_model_ckpt_only=cfg.load_model_ckpt_only)
-        last_ckpt_epoch = meta_data["epoch"]
+        last_ckpt_epoch = 0 if cfg.load_model_ckpt_only else meta_data["epoch"]
     else:
         last_ckpt_epoch = 0
 
