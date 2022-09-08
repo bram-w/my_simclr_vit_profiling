@@ -320,13 +320,16 @@ def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler,
                 new_v = torch.eye(dim).to(v.device)
                 new_dict[k] = new_v
                 k_prefix_template = ('' if is_xla() else 'module.') + 'visual.model_list.{}.fc'
+
+                proj_std = v.std()
+                noise_scale = 0.1
                 for i in range(num_models):
-                    new_dict[k_prefix_template.format(i) + '.weight'] = v.T
+                    new_dict[k_prefix_template.format(i) + '.weight'] = v.T + (noise_scale * proj_std *  torch.randn_like(v))
                     new_dict[k_prefix_template.format(i) + '.bias'] = torch.zeros(dim//num_models).to(v.device)
             elif 'text_projection' in k:
                 new_v = v.repeat(1, num_models)
                 new_dict[k] = new_v
-            elif '.visual.' not in k:
+            elif 'visual.' not in k:
                 new_dict[k] = v
             else:
                 # assuming it's from list

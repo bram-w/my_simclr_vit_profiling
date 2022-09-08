@@ -226,12 +226,14 @@ class CLIPLoss(nn.Module):
 
             # if these predictions are uniform than all of them
             # here are 
+            """
             BS = image_embed_all.size(0)
             noise_scale = 0.1 * (1 / BS)
             # doing same noise for image and text
             noise = noise_scale * torch.rand_like(correct_image_probs)
             correct_image_probs += noise
             correct_text_probs += noise
+            """
             # correct_text_probs = cropped_text_probs[0]
             # correct_text_probs = cropped_text_probs.diagonal(0, 0, 1).t()
             # This is now LBS x groups
@@ -276,8 +278,8 @@ class CLIPLoss(nn.Module):
             So BEFORE flattening correct probs take osftmax along last dim and then mult by g
             Then can just proudct and mean ave vecootors
             """
-            correct_image_probs = self.num_normalization_groupings * (correct_image_probs*self.group_t).softmax(dim=-1)
-            correct_text_probs = self.num_normalization_groupings * (correct_text_probs*self.group_t).softmax(dim=-1)
+            correct_image_weights = self.num_normalization_groupings * (correct_image_probs*self.group_t).softmax(dim=-1)
+            correct_text_weights = self.num_normalization_groupings * (correct_text_probs*self.group_t).softmax(dim=-1)
 
             # print(correct_text_probs, correct_image_probs)
             # print(image_group_sims.shape, image_group_sims.swapaxes(2, 1).shape, local_batch_size,
@@ -288,7 +290,7 @@ class CLIPLoss(nn.Module):
             image_cross_entropy = F.cross_entropy(logit_scale * image_logits,
                                                     self.labels.repeat_interleave(self.num_normalization_groupings),
                                                     reduction='none')
-            image_weighted_cross_entropy = image_cross_entropy *  correct_image_probs.flatten()
+            image_weighted_cross_entropy = image_cross_entropy *  correct_image_weights.flatten()
             image_loss = image_weighted_cross_entropy.mean()
 
             # text_logits = text_group_sims.swapaxes(2, 1).view(local_batch_size*self.num_normalization_groupings,
@@ -297,7 +299,7 @@ class CLIPLoss(nn.Module):
             text_cross_entropy = F.cross_entropy(logit_scale * text_logits,
                                                     self.labels.repeat_interleave(self.num_normalization_groupings),
                                                     reduction='none')
-            text_weighted_cross_entropy = text_cross_entropy * correct_text_probs.flatten()
+            text_weighted_cross_entropy = text_cross_entropy * correct_text_weights.flatten()
             text_loss = text_weighted_cross_entropy.mean()
 
             clip_loss = (image_loss + text_loss) / 2
