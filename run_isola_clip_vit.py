@@ -212,6 +212,7 @@ def train():
     # else:
     #     train_dataset, train_loader, train_sampler = load_training_data_cuda()
     assert not (cfg.num_models and cfg.use_mobilenet)
+    # not putting in all assertions, trusting not to muck up for now
     if cfg.num_models and cfg.use_resnet18:
         # model = slip_models.MultiBinaryCLIP(num_models=cfg.embed_dim)
         # model = slip_models.ParallelMultiBinaryCLIP(num_models=cfg.embed_dim)
@@ -225,7 +226,10 @@ def train():
     elif cfg.use_mobilenet:
         model = slip_models.CLIP_MobileNetV3Small()
     elif cfg.use_resnet18:
-        model = slip_models.CLIP_ResNet18(large_text_model=cfg.large_text_model)
+        model = slip_models.CLIP_ResNet18(embed_dim=cfg.embed_dim, large_text_model=cfg.large_text_model)
+    elif cfg.use_bagnet:
+        model = slip_models.CLIP_BagNet(num_patches=cfg.use_bagnet,
+                                        embed_dim=cfg.embed_dim, large_text_model=cfg.large_text_model)
     else:
         assert not cfg.large_text_model
         model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)

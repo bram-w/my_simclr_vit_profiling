@@ -17,7 +17,7 @@ import losses
 from torchvision.models import mobilenet_v3_small, resnet18
 import parallel_transformer
 import parallel_protonet
-
+import bagnet
 
 def text_binary_call():
     # base is 512 8 12
@@ -442,6 +442,34 @@ def CLIP_MobileNetV3Small(embed_dim=512, **kwargs):
         transformer_width=512, transformer_heads=8, transformer_layers=12, **kwargs)
     return model
 
+def CLIP_BagNet(embed_dim=512, 
+                    patch_size=33,
+                   large_text_model=False,
+                  **kwargs):
+    bagnet_call_dict = {9:bagnet.bagnet9,
+                        17:bagnet.bagnet17,
+                        33:bagnet.bagnet33}
+    bagnet_call = bagnet_call_dict[patch_size]
+
+    vision_model = bagnet_call()
+    vision_model.fc = torch.nn.Identity()
+    if large_text_model:
+        model = CLIP(embed_dim=embed_dim, vision_width=2048,
+                     vision_model=vision_model, context_length=77,
+                     vocab_size=49408,
+                     transformer_width=1024,
+                     transformer_heads=16,
+                     transformer_layers=12,
+                     **kwargs)
+    else:
+        model = CLIP(embed_dim=embed_dim, vision_width=2048,
+                     vision_model=vision_model, context_length=77,
+                     vocab_size=49408,
+                     transformer_width=512,
+                     transformer_heads=8,
+                     transformer_layers=12,
+                     **kwargs)
+    return model
 
 def CLIP_ResNet18(embed_dim=512, 
                    large_text_model=False,
