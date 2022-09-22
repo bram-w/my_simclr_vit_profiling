@@ -45,6 +45,9 @@ cfg.multi_binary_model = False
 cfg.use_mobilenet = False
 cfg.use_resnet18 = False
 cfg.use_bagnet = 0 # can set to # of patches
+cfg.bagnet_text_loss = True
+cfg.bagnet_pool = False
+cfg.use_ae = ''
 cfg.large_text_model = False
 # --------------------------------------------------------------------------- #
 # training options

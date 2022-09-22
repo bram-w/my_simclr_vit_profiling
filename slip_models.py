@@ -19,6 +19,10 @@ import parallel_transformer
 import parallel_protonet
 import bagnet
 
+from ldm.models.autoencoder import AutoencoderKL, VQModel
+from omegaconf import OmegaConf
+
+
 def text_binary_call():
     # base is 512 8 12
     # quadrating in width, linear in depth
@@ -442,8 +446,88 @@ def CLIP_MobileNetV3Small(embed_dim=512, **kwargs):
         transformer_width=512, transformer_heads=8, transformer_layers=12, **kwargs)
     return model
 
+
+def create_ae(ae_str='kl-f8'):
+
+    # config = OmegaConf.load(f'configs/autoencoder/autoencoder_{ae_str}.yaml')
+    model_dir = f'models/first_stage_models/{ae_str}'
+    config = OmegaConf.load(f'{model_dir}/config.yaml')
+    # sd = torch.load(f'models/first_stage_models/{ae_str_to_first_stage_id[ae_str]}/model.ckpt',
+    sd = torch.load(f'{model_dir}/model.ckpt',
+            map_location=torch.device('cpu'))['state_dict']
+
+    if 'kl' in ae_str:
+        ae = AutoencoderKL(config['model']['params']['ddconfig'],
+                       config['model']['params']['lossconfig'],
+                       config['model']['params']['embed_dim'])
+    elif 'vq' in ae_str:
+        ae = VQModel(config['model']['params']['ddconfig'],
+                     config['model']['params']['lossconfig'],
+                     config['model']['params']['n_embed'],
+                     config['model']['params']['embed_dim'])
+    else:
+        raise NotImplementedError
+    ae.load_state_dict(sd)
+    ae = ae.eval()
+    return ae
+
+class AE_Encoder(torch.nn.Module):
+    def __init__(self, ae_str):
+        super().__init__()
+        self.ae = create_ae(ae_str)
+        self.type = ae_str.split('-')[0]
+        assert self.type in {'vq', 'kl'}
+
+    def forward(self, x):
+        if self.type == 'kl':
+            # TODO: Consider doing sampling here instead of mode
+            return self.ae.encode(x).mode()
+        elif self.type == 'vq':
+            # TODO: Consider adding non-quantized capability here
+            # The other return items of encode are a loss and a list including the token idx
+            return self.ae.encode(x)[0]
+        else:
+            raise NotImplementedError
+
+
+def CLIP_AE_ResNet(embed_dim=512,
+                    ae_str='kl-f8',
+                    large_text_model=False,
+                    **kwargs):
+    enc = AE_Encoder(ae_str)
+    for p in enc.parameters():
+        p.requires_grad = False
+    clf = resnet18()
+    clf.fc = torch.nn.Identity()
+
+    new_in_channels = int(ae_str.split('x')[-1])
+    clf.conv1 = nn.Conv2d(new_in_channels, clf.conv1.out_channels, kernel_size=7, stride=2, padding=3, bias=False)
+    nn.init.kaiming_normal_(clf.conv1.weight, mode="fan_out", nonlinearity="relu")
+
+
+    vision_model = torch.nn.Sequential(enc, clf)
+
+    if large_text_model:
+        model = CLIP(embed_dim=embed_dim, vision_width=512,
+                     vision_model=vision_model, context_length=77,
+                     vocab_size=49408,
+                     transformer_width=1024,
+                     transformer_heads=16,
+                     transformer_layers=12,
+                     **kwargs)
+    else:
+        model = CLIP(embed_dim=embed_dim, vision_width=512,
+                     vision_model=vision_model, context_length=77,
+                     vocab_size=49408,
+                     transformer_width=512,
+                     transformer_heads=8,
+                     transformer_layers=12,
+                     **kwargs)
+    return model
+
+
 def CLIP_BagNet(embed_dim=512, 
-                    patch_size=33,
+                    patch_size=33, avg_pool=False,
                    large_text_model=False,
                   **kwargs):
     bagnet_call_dict = {9:bagnet.bagnet9,
@@ -451,7 +535,11 @@ def CLIP_BagNet(embed_dim=512,
                         33:bagnet.bagnet33}
     bagnet_call = bagnet_call_dict[patch_size]
 
-    vision_model = bagnet_call()
+    vision_model = bagnet_call(avg_pool=avg_pool)
+    # with avg_pool=False will get bs x spatial x spatial x embed_dim
+    # This can be hit with proj fine
+    # size is 27, 26, 24 for patches repsectiveyl
+    #    (note that patches have overlap)
     vision_model.fc = torch.nn.Identity()
     if large_text_model:
         model = CLIP(embed_dim=embed_dim, vision_width=2048,

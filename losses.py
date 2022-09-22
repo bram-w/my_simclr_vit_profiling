@@ -112,6 +112,64 @@ def two_arr_pdist(a, b, p=2):
 
 
 
+class CLIPPatchLoss(nn.Module):
+    """
+    Pulling out partally so don't gget any crossed wires and partially b/c
+    current is so complicated it makes it hard to work on
+    """
+    def __init__(self, use_text_loss=True):
+        super().__init__()
+        self.labels = None
+        self.last_local_batch_size = None
+        self.use_text_loss = use_text_loss
+
+    def forward(self, outputs):
+        image_embed = outputs['image_embed']
+        text_embed = outputs['text_embed']
+        logit_scale = outputs['logit_scale']
+        local_batch_size = image_embed.size(0)
+
+        if local_batch_size != self.last_local_batch_size:
+            self.identity_idx = torch.arange(local_batch_size, device=image_embed.device)
+            self.labels = local_batch_size * get_rank() + self.identity_idx
+            self.last_local_batch_size = local_batch_size
+
+        spatial_dim = image_embed.size(1)
+        image_embed = F.normalize(image_embed, dim=-1, p=2)
+        image_embed = image_embed.flatten(start_dim=0, end_dim=2) # LBS*spatial*sptial x embed_dim
+        text_embed = F.normalize(text_embed, dim=-1, p=2)
+
+    
+        image_embed_all = gather_tensor_with_backward(image_embed)
+        # print(image_embed.shape, image_embed_all.shape, text_embed.shape, text_embed_all.shape)
+        text_embed_all = gather_tensor_with_backward(text_embed)
+        # text is just normal GBS x embed_dim, image is GBS*spatial*sptial x embed_dim
+
+        # cosine similarity as logits
+        logits_per_image = logit_scale * image_embed @ text_embed_all.t()
+
+        # logits per image are LBS*spatial*sptial x GBS
+        # logits per text are LBS x GBS*spatial*sptial
+        # labels for logits_per_image are just labels.repeat_interleave(spatial_dim**2)
+
+        # per text is more complicated, not a single match and don't want to repel from others
+        # two options 1) Sum up logits for patches 2) ignore this side of the loss
+        # third option of having it work as long as it matches to any of correct images seems weird
+        # don't expect a single patch to have all that description
+        # Adding up seems good but also could have unforeseen affects
+        # Ignoring takes away a loss component, probably stops retrieval from working
+        # going to add knob to turn off but default sum logits
+
+        clip_loss = F.cross_entropy(logits_per_image, self.labels.repeat_interleave(spatial_dim**2))
+
+        if self.use_text_loss:
+            logits_per_text = logit_scale * text_embed @ image_embed_all.t()
+            logits_per_text = logits_per_text.view(local_batch_size, -1, spatial_dim**2).mean(dim=2) # using mean here so scale is same
+            text_loss = F.cross_entropy(logits_per_text, self.labels)
+            clip_loss += text_loss
+            clip_loss *= 0.5 # want to average out still
+
+        return clip_loss
 
 class CLIPLoss(nn.Module):
     def __init__(self, use_image_unif_loss=False, use_text_unif_loss=False,

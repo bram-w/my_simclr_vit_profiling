@@ -14,7 +14,7 @@ import torchvision.transforms as T
 
 # import clip_config as config
 import config
-from losses import SimCLRLoss, IsolaCLIPLoss, CLIPLoss, BarlowTwinsLoss
+from losses import SimCLRLoss, IsolaCLIPLoss, CLIPLoss, BarlowTwinsLoss, CLIPPatchLoss
 from models import SimCLRViTModel
 from distributed import (
     get_world_size,
@@ -228,8 +228,12 @@ def train():
     elif cfg.use_resnet18:
         model = slip_models.CLIP_ResNet18(embed_dim=cfg.embed_dim, large_text_model=cfg.large_text_model)
     elif cfg.use_bagnet:
-        model = slip_models.CLIP_BagNet(num_patches=cfg.use_bagnet,
+        model = slip_models.CLIP_BagNet(num_patches=cfg.use_bagnet, avg_pool=cfg.bagnet_pool,
                                         embed_dim=cfg.embed_dim, large_text_model=cfg.large_text_model)
+    elif cfg.use_ae:
+        model = slip_models.CLIP_AE_ResNet(ae_str=cfg.use_ae,
+                                        embed_dim=cfg.embed_dim,
+                                        large_text_model=cfg.large_text_model)
     else:
         assert not cfg.large_text_model
         model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)
@@ -280,6 +284,9 @@ def train():
     elif cfg.isola_align_scale and cfg.isola_unif_scale:
         loss_fn = IsolaCLIPLoss(align_scale=cfg.isola_align_scale,
                                  unif_scale=cfg.isola_unif_scale)
+    elif cfg.use_bagnet and not cfg.bagnet_pool:
+        return_logit_scale=True
+        loss_fn = CLIPPatchLoss(use_text_loss=cfg.bagnet_text_loss)
     else:
         return_logit_scale = True
         loss_fn = CLIPLoss(use_image_unif_loss=cfg.isola_unif_scale,
