@@ -500,7 +500,8 @@ def CLIP_AE_ResNet(embed_dim=512,
     clf = resnet18()
     clf.fc = torch.nn.Identity()
 
-    new_in_channels = int(ae_str.split('x')[-1])
+    ae_to_in_channels = {'kl-f8':4, 'vq-f4':3}
+    new_in_channels = ae_to_in_channels[ae_str]
     clf.conv1 = nn.Conv2d(new_in_channels, clf.conv1.out_channels, kernel_size=7, stride=2, padding=3, bias=False)
     nn.init.kaiming_normal_(clf.conv1.weight, mode="fan_out", nonlinearity="relu")
 

@@ -228,7 +228,7 @@ def train():
     elif cfg.use_resnet18:
         model = slip_models.CLIP_ResNet18(embed_dim=cfg.embed_dim, large_text_model=cfg.large_text_model)
     elif cfg.use_bagnet:
-        model = slip_models.CLIP_BagNet(num_patches=cfg.use_bagnet, avg_pool=cfg.bagnet_pool,
+        model = slip_models.CLIP_BagNet(patch_size=cfg.use_bagnet, avg_pool=cfg.bagnet_pool,
                                         embed_dim=cfg.embed_dim, large_text_model=cfg.large_text_model)
     elif cfg.use_ae:
         model = slip_models.CLIP_AE_ResNet(ae_str=cfg.use_ae,
