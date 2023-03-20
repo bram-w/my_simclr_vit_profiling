@@ -71,8 +71,8 @@ cfg.linear_eval.test_epoch_interval = 10
 # --------------------------------------------------------------------------- #
 # distributed options
 # --------------------------------------------------------------------------- #
-cfg.init_method = ""
-cfg.port = 20000
+cfg.init_method = "nccl"
+cfg.port = '20000'
 cfg.world_size = -1
 cfg.rank = -1
 cfg.rank_offset = 0

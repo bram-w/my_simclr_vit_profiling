@@ -84,16 +84,19 @@ def load_training_data():
     world_size = get_world_size()
     local_batch_size = cfg.batch_size // world_size
     if cfg.fake_data:
-        train_loader = xu.SampleGenerator(
-            data=(
-                torch.randn(local_batch_size, 3, 224, 224),
-                torch.randint(low=0, high=10000, size=(local_batch_size, 77))
-            ),
-            sample_count=train_dataset_len // local_batch_size // world_size,
-        )
-        train_sampler = None
-        return [None] * train_dataset_len, train_loader, train_sampler
-
+        if xu is not None:
+            train_loader = xu.SampleGenerator(
+                data=(
+                    torch.randn(local_batch_size, 3, 224, 224),
+                    torch.randint(low=0, high=10000, size=(local_batch_size, 77))
+                ),
+                sample_count=train_dataset_len // local_batch_size // world_size,
+            )
+            train_sampler = None
+            return [None] * train_dataset_len, train_loader, train_sampler
+        else:
+            from fake_data import fake_data
+            return [None] * train_dataset_len, fake_data(train_dataset_len, local_batch_size), None
     master_print(f"loading images from : {cfg.data_dir}")
     tokenizer = SimpleTokenizer()
     viz_transform =     T.Compose(
@@ -233,6 +236,7 @@ def train():
 
     logs = []
     log_file = f'log_{cfg.ckpt_prefix}.txt'
+    clamp_parameter = model.logit_scale if cfg.device!='cuda' else model.module.logit_scale
     while epoch <= num_epochs:
         master_print(f"starting epoch {epoch}")
         time_b = time.time()
@@ -263,7 +267,11 @@ def train():
                 optimizer.step()
             lr_scheduler.step()
 
-            with torch.no_grad(): model.logit_scale.data.clamp_(0, 4.6052)
+            with torch.no_grad():
+                # model.logit_scale.data.clamp_(0, 4.6052)
+                clamp_parameter.data.clamp_(0, 4.6052)
+                # clamp_parameter.data += 5
+                # print(model.module.logit_scale, clamp_parameter)
 
             if (step+1 ) % cfg.log_step_interval == 0 or step==0:
                 lr = optimizer.param_groups[0]["lr"]
