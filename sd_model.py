@@ -33,11 +33,12 @@ class SDModel(nn.Module):
     def __init__(self,
                 model_config_name="CompVis/stable-diffusion-v1-4",
                 latent_scale = 0.18215,
-                pretrained_unet=False
+                pretrained_unet=False,
+                 cond_dropout=0.1
                 ):
         super().__init__()
         # print("TODO: Freeze VAE + Text encoder")
-        master_print("TODO: Does Unet need better init?")
+        print("TODO: Does Unet need better init?")
         self.vae = AutoencoderKL.from_pretrained(model_config_name, 
                                             subfolder="vae")
         self.text_encoder = slip_models.CLIPTextPretrained()
@@ -62,9 +63,40 @@ class SDModel(nn.Module):
             subfolder="tokenizer",
             revision=None
             )
+        self.cond_dropout = 0.1
+        
+        # slow startup on cpu but not sure how to handle on DDP
+        self.initialize_uncond_hidden_states()
+        
+        
+    def initialize_uncond_hidden_states(self):
+        
+        with torch.no_grad():
+            uncond_tokenized_inputs = self.tokenizer(
+                                          '',
+                                          padding="max_length",
+                                          max_length=self.tokenizer.model_max_length,
+                                          truncation=True,
+                                          return_tensors='pt'
+            ).input_ids
+
+            self.encoder_hidden_states_UC = self.text_encoder(uncond_tokenized_inputs).detach()
         
     def forward(self, img, txt):
+        # Maybe could check if above is initialized but avoiding if/else
+        
+        
         encoder_hidden_states = self.text_encoder(txt)
+        # Do dropout to null conditioning
+        lbs = encoder_hidden_states.size(0)
+        mask = (torch.rand(lbs,
+                           device=encoder_hidden_states.device) > self.cond_dropout)
+        uncond_hidden_states =self.encoder_hidden_states_UC.to(encoder_hidden_states.device).repeat(lbs, 1, 1)
+        encoder_hidden_states = torch.where(mask, 
+                                            encoder_hidden_states,
+                                            uncond_hidden_states)
+        
+        
         # Not sure if scaling is right
         latents = self.vae.encode(img).latent_dist.sample() * self.latent_scale
 
@@ -100,7 +132,7 @@ class SDModel(nn.Module):
         encoder_hidden_states_C = self.text_encoder(cond_tokenized_inputs)
         
         uncond_tokenized_inputs = self.tokenizer(
-                                      prompt,
+                                      '',
                                       padding="max_length",
                                       max_length=self.tokenizer.model_max_length,
                                       truncation=True,

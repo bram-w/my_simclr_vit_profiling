@@ -28,6 +28,7 @@ cfg.use_pytorch_amp = False
 # --------------------------------------------------------------------------- #
 cfg.model_name = 'CompVis/stable-diffusion-v1-4'
 cfg.num_noise_steps = 1000
+cfg.cond_dropout = 0.1
 
 # --------------------------------------------------------------------------- #
 # data options
@@ -55,8 +56,10 @@ cfg.use_resnet18 = False
 # training options
 # --------------------------------------------------------------------------- #
 cfg.batch_size = 512
-cfg.lr = 6e-5
-cfg.weight_decay = 0.5
+cfg.lr = 1e-4
+cfg.weight_decay = 1e-2
+cfg.warmup_steps = 1e4
+
 cfg.num_epochs = 35
 cfg.warmup_epochs = 1
 

@@ -30,13 +30,13 @@ from distributed import (
     load_ckpt,
     load_text_model_ckpt
 )
-from schedulers import get_warmup_cosine_scheduler
+from schedulers import get_warmup_cosine_scheduler, get_warmup_to_constant_scheduler
 from transforms import ImgPilColorDistortion, ImgPilGaussianBlur, MultiViewGenerator
 from utils import SmoothedValue
 import my_webdataset as wds
 from my_webdataset import DataPipeline, WebLoader
 import slip_models
-from tokenizer import SimpleTokenizer
+# from tokenizer import SimpleTokenizer
 
 ####
 import transformers
@@ -166,7 +166,7 @@ def train():
     train_dataset, train_loader, train_sampler = load_training_data()
     
     
-    model = SDModel()
+    model = SDModel(cond_dropout=cfg.cond_dropout)
         
     # test  = transformers.CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
     """
@@ -244,6 +244,8 @@ def train():
         )
         """
         
+    """
+    OLD OPTIM CODE
     p_wd, p_non_wd = [], []
     for n, p in model.named_parameters():
         if not p.requires_grad:
@@ -255,20 +257,32 @@ def train():
 
     optim_params = [{"params": p_wd, "weight_decay": cfg.weight_decay},
                     {"params": p_non_wd, "weight_decay": 0}]
-
-
+    """
+    
+    
+    # https://github.com/CompVis/latent-diffusion/issues/52#issuecomment-1229188761
+    # Noting that scale LR seems weird
+    # Also some people recommend Adam over AdamW
+    
+    # Original batch size is 2048
+    # They did it by using 256 GPUs w/ BS 4 and 2 accumlate gradients
+    # With this LR was 1e-4
+    # LAION steps (no aesthetics) was 237k
+    # For now just scale LR by num_datapoints / 2048
+    # BS for us will be much lower, could adjust steps accordingly
+    # but shouldn't matter for initial training signal
+    batch_ratio = cfg.batch_size / 2048
     optimizer = torch.optim.AdamW(
-        optim_params,
+        model.parameters(),
         weight_decay=cfg.weight_decay,
-        lr=cfg.lr,
+        lr=cfg.lr * batch_ratio,
         betas=(0.9, 0.98)
     )
 
     iters_per_epoch = train_dataset_len / batch_size
-    lr_scheduler = get_warmup_cosine_scheduler(
+    lr_scheduler = get_warmup_to_constant_scheduler(
         optimizer,
-        warmup_iteration=int(iters_per_epoch * cfg.warmup_epochs),
-        max_iteration=int(iters_per_epoch * num_epochs),
+        warmup_iteration=cfg.warmup_steps / batch_ratio,
     )
     scaler = None
     if cfg.use_pytorch_amp:
