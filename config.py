@@ -35,7 +35,7 @@ cfg.pretrained_unet = False
 # data options
 # --------------------------------------------------------------------------- #
 cfg.fake_data = False
-cfg.data_dir = "gs://sfr-tpu-us-east1-research/bwallace/cc12m_shards/"
+cfg.data_dir = "gs://sfr-tpu-us-east1-research/bwallace/cc12m_shards"
 cfg.drop_last = True
 cfg.num_workers = 4
 
