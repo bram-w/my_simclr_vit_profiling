@@ -1,5 +1,6 @@
 *OUT
 launch*sh
+outputs
 
 *.log
 *.err
