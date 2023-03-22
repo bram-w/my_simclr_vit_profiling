@@ -42,7 +42,7 @@ from tokenizer import SimpleTokenizer
 import transformers
 # import clip
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
-from sd_model import SDModel
+
 
 # from transformers import CLIPTextModel, CLIPTokenizer
 
@@ -164,12 +164,15 @@ def train():
     num_epochs = cfg.num_epochs
     assert batch_size % get_world_size() == 0
     train_dataset, train_loader, train_sampler = load_training_data()
-    
-    
-    model = SDModel()
+    if cfg.use_mobilenet:
+        model = slip_models.CLIP_MobileNetV3Small()
+    elif cfg.use_resnet18:
+        model = slip_models.CLIP_ResNet18()
+    else:
+        model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)
+        
         
     # test  = transformers.CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-    """
     master_print("Initializing text encoder")
     text_encoder = slip_models.CLIPTextPretrained()
     print("VAE start")
@@ -184,9 +187,6 @@ def train():
     
     scheduler = DDPMScheduler.from_pretrained('CompVis/stable-diffusion-v1-4',
                                               subfolder='scheduler')
-                                              
-    """
-    #####
     """
     transformers is weird about loading pretrained models in DDP which is fun?
     master_print("Initializing text encoder")
@@ -216,20 +216,19 @@ def train():
         device = xm.xla_device()
         train_loader = pl.MpDeviceLoader(train_loader, device)
         model = model.to(device)
-        # text_encoder = text_encoder.to(device)
-        # vae = vae.to(device)
-        # unet = unet.to(device)
+        text_encoder = text_encoder.to(device)
+        vae = vae.to(device)
+        unet = unet.to(device)
         broadcast_xla_master_model_param(model)
     else:
         device = torch.device(f"cuda:{cfg.device_id}")
-        # text_encoder = text_encoder.to(device)
-        # vae = vae.to(device)
-        # unet = unet.to(device)
+        text_encoder = text_encoder.to(device)
+        vae = vae.to(device)
+        unet = unet.to(device)
         model = model.to(device)
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[cfg.device_id], output_device=cfg.device_id, find_unused_parameters=True
         )
-        """
         text_encoder = torch.nn.parallel.DistributedDataParallel(
             text_encoder, device_ids=[cfg.device_id],
             output_device=cfg.device_id, find_unused_parameters=True
@@ -242,7 +241,6 @@ def train():
             unet, device_ids=[cfg.device_id],
             output_device=cfg.device_id, find_unused_parameters=True
         )
-        """
         
     p_wd, p_non_wd = [], []
     for n, p in model.named_parameters():
@@ -288,10 +286,11 @@ def train():
         else:
             assert os.path.exists(cfg.resume_ckpt_file)
             resume_ckpt_path = cfg.resume_ckpt_file
-            
+    elif cfg.pretrained_text_ckpt:
+        load_text_model_ckpt(cfg.pretrained_text_ckpt, model)
+
     if resume_ckpt_path is not None:
-        meta_data = load_ckpt(resume_ckpt_path, model, optimizer,
-                              lr_scheduler, scaler,
+        meta_data = load_ckpt(resume_ckpt_path, model, optimizer, lr_scheduler, scaler,
                             load_model_ckpt_only=cfg.load_model_ckpt_only)
         last_ckpt_epoch = meta_data["epoch"]
     else:
@@ -309,6 +308,7 @@ def train():
 
     logs = []
     log_file = f'log_{cfg.ckpt_prefix}.txt'
+    logit_scale_parameter = model.logit_scale if cfg.device!='cuda' else model.module.logit_scale
     while epoch <= num_epochs:
         master_print(f"starting epoch {epoch}")
         time_b = time.time()
@@ -322,9 +322,8 @@ def train():
                 """
                 Separate DDPs is rough but just stitching pipeline together for now
                 """
-                
-                """
-                PUTTING ALL OF THIS INTO SDMODEL
+                # image_embed = model.module.encode_image(img.to(model.device)) if hasattr(model, 'module') else model.encode_image(img)
+                logit_scale = logit_scale_parameter
                 encoder_hidden_states = text_encoder(txt)
                 # Not sure if scaling is right
                 latents = vae.module.encode(img.to(vae.device)).latent_dist.sample() * 0.18215 if hasattr(vae, 'module') else vae.encode(img).latent_dist.sample() * 0.18215
@@ -338,12 +337,16 @@ def train():
                                 
                 
                 noise_pred = unet(noisy_latents,
-                                  timesteps, 
+                                  1, 
                                  encoder_hidden_states=encoder_hidden_states).sample
+                # recon_img = vae.module.decode(latents / 0.18215).sample if hasattr(vae, 'module') else  vae.decode(latents / 0.18215).sample
+                # output = model(img, txt)
                 
-                loss = (noise.to(noise_pred.device) - noise_pred).pow(2).mean()
-                """
-                loss = model(img, txt)
+                recon_loss = (noise.to(noise_pred.device) - noise_pred).pow(2).mean()
+                loss = recon_loss
+                # loss = loss_fn(output)
+                          
+                # loss = output['image_embed'].pow(2).sum() # dummy loss
             # backward pass
             if scaler is not None:
                 scaler.scale(loss).backward()
@@ -360,6 +363,12 @@ def train():
             else:
                 optimizer.step()
             lr_scheduler.step()
+
+            with torch.no_grad():
+                # model.logit_scale.data.clamp_(0, 4.6052)
+                logit_scale_parameter.data.clamp_(0, 4.6052)
+                # clamp_parameter.data += 5
+                # print(model.module.logit_scale, clamp_parameter)
 
             if (step+1 ) % cfg.log_step_interval == 0 or step==0:
                 lr = optimizer.param_groups[0]["lr"]
