@@ -16,6 +16,7 @@ import losses
 
 from torchvision.models import mobilenet_v3_small, resnet18
 
+import clip
 
 
 class LayerNorm(nn.LayerNorm):
@@ -105,6 +106,7 @@ class CLIP(nn.Module):
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
         self.initialize_parameters()
+        print("TODO: freeze text encoder")
 
     def initialize_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
@@ -157,6 +159,63 @@ class CLIP(nn.Module):
         return {'image_embed': image_embed,
                 'text_embed': text_embed,
                 'logit_scale': self.logit_scale.exp() if return_logit_scale else None}
+    
+    
+    
+class CLIPTextPretrained(nn.Module):
+    def __init__(self,
+                 # text
+                 context_length=77,
+                 vocab_size=49408,
+                 transformer_width=768,
+                 transformer_heads=12,
+                 transformer_layers=12,
+                 **kwargs,
+                 ):
+        super().__init__()
+
+        self.context_length = context_length
+        self.transformer = Transformer(
+            width=transformer_width,
+            layers=transformer_layers,
+            heads=transformer_heads,
+            attn_mask=self.build_attention_mask(),
+        )
+
+        self.vocab_size = vocab_size
+        self.token_embedding = nn.Embedding(vocab_size, transformer_width)
+        self.positional_embedding = nn.Parameter(torch.empty(self.context_length, transformer_width))
+        self.ln_final = LayerNorm(transformer_width)
+
+
+        self.initialize_parameters()
+
+    def initialize_parameters(self):
+        init_model = clip.load("ViT-L/14", device='cpu')[0].state_dict()
+        missing_keys, unexpected_keys = self.load_state_dict(init_model, 
+                                                             strict=False)
+        assert len(missing_keys)==0
+
+    def build_attention_mask(self):
+        # lazily create causal attention mask, with full attention between the vision tokens
+        # pytorch uses additive attention mask; fill with -inf
+        mask = torch.empty(self.context_length, self.context_length)
+        mask.fill_(float("-inf"))
+        mask.triu_(1)  # zero out the lower diagonal
+        return mask
+
+
+
+    def forward(self, text):
+        x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
+        x = x + self.positional_embedding
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.transformer(x)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        # this is last hidden state
+        x = self.ln_final(x)
+
+        return x
 
 
 class SIMCLR(nn.Module):

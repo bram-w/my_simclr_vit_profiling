@@ -38,6 +38,14 @@ from my_webdataset import DataPipeline, WebLoader
 import slip_models
 from tokenizer import SimpleTokenizer
 
+####
+import transformers
+# import clip
+from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
+
+
+# from transformers import CLIPTextModel, CLIPTokenizer
+
 
 class SampleGenerator(object):
   """Iterator which returns multiple samples of a given input data.
@@ -87,7 +95,7 @@ def load_training_data():
         if xu is not None:
             train_loader = xu.SampleGenerator(
                 data=(
-                    torch.randn(local_batch_size, 3, 224, 224),
+                    torch.randn(local_batch_size, 3, 512, 512),
                     torch.randint(low=0, high=10000, size=(local_batch_size, 77))
                 ),
                 sample_count=train_dataset_len // local_batch_size // world_size,
@@ -98,10 +106,14 @@ def load_training_data():
             from fake_data import fake_data
             return [None] * train_dataset_len, fake_data(train_dataset_len, local_batch_size), None
     master_print(f"loading images from : {cfg.data_dir}")
-    tokenizer = SimpleTokenizer()
+    tokenizer = transformers.CLIPTokenizer.from_pretrained(
+        cfg.model_name, subfolder="tokenizer", revision=None
+    )
+    
+    # tokenizer = SimpleTokenizer()
     viz_transform =     T.Compose(
                     [
-                        T.RandomResizedCrop(224, scale=(0.5, 1.0)),
+                        T.RandomResizedCrop(512, scale=(0.5, 1.0)),
                         T.ToTensor(),
                         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                     ]
@@ -158,18 +170,78 @@ def train():
         model = slip_models.CLIP_ResNet18()
     else:
         model = slip_models.CLIP_VITB16(embed_dim=cfg.embed_dim)
+        
+        
+    # test  = transformers.CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+    master_print("Initializing text encoder")
+    text_encoder = slip_models.CLIPTextPretrained()
+    print("VAE start")
+    print("VAE needs to be frozen")
+    # diffusers is fine though
+    vae = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae")
+    print("VAE end")
+    
+    master_print("Does UNet need better weight init?")
+    unet_cfg = UNet2DConditionModel.load_config("CompVis/stable-diffusion-v1-4", subfolder="unet") 
+    unet = UNet2DConditionModel.from_config(unet_cfg)
+    
+    scheduler = DDPMScheduler.from_pretrained('CompVis/stable-diffusion-v1-4',
+                                              subfolder='scheduler')
+    """
+    transformers is weird about loading pretrained models in DDP which is fun?
+    master_print("Initializing text encoder")
+    # downloading from pretrained might need to come from master initially
+    if is_master():
+        master_print("Master init")
+        # doing this to allow download to happen
+        text_encoder = transformers.CLIPTextModel.from_pretrained(
+            cfg.model_name, subfolder="text_encoder", revision=None
+        )
+    synchronize()
+    if not is_master():
+        print("Non-master init")
+        # doing this to allow download to happen
+        # could be from state dict bug
+        # https://github.com/huggingface/transformers/issues/8649
+        text_encoder = transformers.CLIPTextModel.from_pretrained(
+            cfg.model_name, subfolder="text_encoder", revision=None
+        )
+    synchronize()
+    """
+    
+    # for p in text_encoder.parameters():
+    #     p.requires_grad = False
+    master_print("Pushing to device")
     if is_xla():
         device = xm.xla_device()
         train_loader = pl.MpDeviceLoader(train_loader, device)
         model = model.to(device)
+        text_encoder = text_encoder.to(device)
+        vae = vae.to(device)
+        unet = unet.to(device)
         broadcast_xla_master_model_param(model)
     else:
         device = torch.device(f"cuda:{cfg.device_id}")
+        text_encoder = text_encoder.to(device)
+        vae = vae.to(device)
+        unet = unet.to(device)
         model = model.to(device)
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[cfg.device_id], output_device=cfg.device_id, find_unused_parameters=True
         )
-
+        text_encoder = torch.nn.parallel.DistributedDataParallel(
+            text_encoder, device_ids=[cfg.device_id],
+            output_device=cfg.device_id, find_unused_parameters=True
+        )
+        vae = torch.nn.parallel.DistributedDataParallel(
+            vae, device_ids=[cfg.device_id],
+            output_device=cfg.device_id, find_unused_parameters=True
+        )
+        unet = torch.nn.parallel.DistributedDataParallel(
+            unet, device_ids=[cfg.device_id],
+            output_device=cfg.device_id, find_unused_parameters=True
+        )
+        
     p_wd, p_non_wd = [], []
     for n, p in model.named_parameters():
         if not p.requires_grad:
@@ -236,7 +308,7 @@ def train():
 
     logs = []
     log_file = f'log_{cfg.ckpt_prefix}.txt'
-    clamp_parameter = model.logit_scale if cfg.device!='cuda' else model.module.logit_scale
+    logit_scale_parameter = model.logit_scale if cfg.device!='cuda' else model.module.logit_scale
     while epoch <= num_epochs:
         master_print(f"starting epoch {epoch}")
         time_b = time.time()
@@ -247,8 +319,33 @@ def train():
             # forward pass
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler is not None):
-                output = model(img, txt)
-                loss = loss_fn(output)
+                """
+                Separate DDPs is rough but just stitching pipeline together for now
+                """
+                # image_embed = model.module.encode_image(img.to(model.device)) if hasattr(model, 'module') else model.encode_image(img)
+                logit_scale = logit_scale_parameter
+                encoder_hidden_states = text_encoder(txt)
+                # Not sure if scaling is right
+                latents = vae.module.encode(img.to(vae.device)).latent_dist.sample() * 0.18215 if hasattr(vae, 'module') else vae.encode(img).latent_dist.sample() * 0.18215
+                
+                noise = torch.randn_like(latents)
+                timesteps = torch.randint(0, scheduler.num_train_timesteps,
+                                          (noise.size(0),),
+                                          device=latents.device)
+                timesteps = timesteps.long()
+                noisy_latents = scheduler.add_noise(latents, noise, timesteps)
+                                
+                
+                noise_pred = unet(noisy_latents,
+                                  1, 
+                                 encoder_hidden_states=encoder_hidden_states).sample
+                # recon_img = vae.module.decode(latents / 0.18215).sample if hasattr(vae, 'module') else  vae.decode(latents / 0.18215).sample
+                # output = model(img, txt)
+                
+                recon_loss = (noise.to(noise_pred.device) - noise_pred).pow(2).mean()
+                loss = recon_loss
+                # loss = loss_fn(output)
+                          
                 # loss = output['image_embed'].pow(2).sum() # dummy loss
             # backward pass
             if scaler is not None:
@@ -269,7 +366,7 @@ def train():
 
             with torch.no_grad():
                 # model.logit_scale.data.clamp_(0, 4.6052)
-                clamp_parameter.data.clamp_(0, 4.6052)
+                logit_scale_parameter.data.clamp_(0, 4.6052)
                 # clamp_parameter.data += 5
                 # print(model.module.logit_scale, clamp_parameter)
 

@@ -5,7 +5,7 @@ class fake_data(object):
 
     def __init__(self, n, lbs):
         # https://wiki.python.org/moin/Generators
-        print("hacked for gpu SD")
+        print("Fake data hacked for gpu SD")
         self.n = n
         self.lbs = lbs
         self.num = 0
@@ -23,7 +23,7 @@ class fake_data(object):
     def next(self):
         if self.num < self.n/self.lbs:
             self.num += 1
-            return torch.randn(self.lbs, 3, 224, 224), torch.randint(low=0, high=10000, size=(self.lbs, 77))
+            return torch.randn(self.lbs, 3, 512, 512), torch.randint(low=0, high=10000, size=(self.lbs, 77))
 
         raise StopIteration()
 
