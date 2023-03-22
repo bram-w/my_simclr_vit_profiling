@@ -166,7 +166,8 @@ def train():
     train_dataset, train_loader, train_sampler = load_training_data()
     
     
-    model = SDModel(cond_dropout=cfg.cond_dropout)
+    model = SDModel(cond_dropout=cfg.cond_dropout,
+                   pretrained_unet=cfg.pretrained_unet)
         
     # test  = transformers.CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
     """

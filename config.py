@@ -29,6 +29,7 @@ cfg.use_pytorch_amp = False
 cfg.model_name = 'CompVis/stable-diffusion-v1-4'
 cfg.num_noise_steps = 1000
 cfg.cond_dropout = 0.1
+cfg.pretrained_unet = False
 
 # --------------------------------------------------------------------------- #
 # data options
