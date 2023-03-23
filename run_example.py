@@ -95,7 +95,7 @@ def load_training_data():
         if xu is not None:
             train_loader = xu.SampleGenerator(
                 data=(
-                    torch.randn(local_batch_size, 3, 512, 512),
+                    torch.randn(local_batch_size, 3, cfg.image_dim, cfg.image_dim),
                     torch.randint(low=0, high=10000, size=(local_batch_size, 77))
                 ),
                 sample_count=train_dataset_len // local_batch_size // world_size,
@@ -113,7 +113,7 @@ def load_training_data():
     # tokenizer = SimpleTokenizer()
     viz_transform =     T.Compose(
                     [
-                        T.RandomResizedCrop(512, scale=(0.5, 1.0)),
+                        T.RandomResizedCrop(cfg.image_dim, scale=(0.5, 1.0)),
                         T.ToTensor(),
                         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                     ]
@@ -124,6 +124,11 @@ def load_training_data():
 
     train_shards = cfg.data_dir + "/cc12m-{000000..009819}.tar"
 
+    tokenizer_call = lambda s: tokenizer(s,
+                    padding="max_length",
+                                      max_length=tokenizer.model_max_length,
+                                      truncation=True,
+                                      return_tensors='pt').input_ids
 
     train_dataset = DataPipeline(
          wds.ResampledShards(train_shards),
@@ -133,11 +138,11 @@ def load_training_data():
         wds.decode("pil", handler=wds.warn_and_continue),
         # we now have a list of decompressed train samples from each shard in this worker, in sequence
         wds.to_tuple("ppm;jpg;jpeg;png", "txt", handler=wds.warn_and_continue),
-        wds.map_tuple(viz_transform, tokenizer, handler=wds.warn_and_continue),
+        wds.map_tuple(viz_transform, lambda s: torch.Tensor(tokenizer_call(s)), handler=wds.warn_and_continue),
         wds.batched(local_batch_size),
         )# .with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
     train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
-            batch_size=None) # , collate_fn=collate_fn)
+            batch_size=None) # , collate_fn=collate_fn) # , collate_fn=collate_fn)
     # train_loader = train_loader.with_length(epoch_size) # adds `__len__` method to dataloader
 
     train_sampler = None
@@ -146,17 +151,27 @@ def load_training_data():
 
     return train_dataset, train_loader, train_sampler
 
-def collate_fn(multi_view_img_list):
+def collate_fn(input_list):
     """
+    Orig message from simclr
     For N images with 2 views, it returns (2*N, C, H, W) shape, arranged as
     [img_1_view_1, ..., img_N_view_1, img_1_view_1, ..., img_N_view_1]
     and can be reshaped to (2, N, C, H, W) for loss computation
     """
+    master_print(input_list)
+    master_print(len(input_list))
+    master_print(type(input_list))
+    master_print(type(input_list[0]))
+    master_print(type(input_list[1]))
+    master_print(input_list[0])
+    master_print(input_list[1])
     img_list = []
-    for n_view in range(2):
-       img_list.extend(views[n_view] for views, _ in multi_view_img_list)
-    label_list = [label for  _, label in multi_view_img_list]
-    return torch.stack(img_list), torch.tensor(label_list, dtype=torch.long)
+    txt_list = []
+
+    # for img, txt in input_list:
+    #     img_list.append(img)
+    #     txt_list.append(txt)
+    return input_list # torch.stack(img_list), torch.tensor(txt_list, dtype=torch.long)
 
 
 def train():

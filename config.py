@@ -30,6 +30,7 @@ cfg.model_name = 'CompVis/stable-diffusion-v1-4'
 cfg.num_noise_steps = 1000
 cfg.cond_dropout = 0.1
 cfg.pretrained_unet = False
+cfg.image_dim = 256
 
 # --------------------------------------------------------------------------- #
 # data options

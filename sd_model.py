@@ -85,7 +85,8 @@ class SDModel(nn.Module):
     def forward(self, img, txt):
         # Maybe could check if above is initialized but avoiding if/else
         
-        
+        # print(img)
+        # print(txt)
         encoder_hidden_states = self.text_encoder(txt)
         # Do dropout to null conditioning
         lbs = encoder_hidden_states.size(0)
