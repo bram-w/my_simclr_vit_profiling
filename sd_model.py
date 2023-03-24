@@ -90,9 +90,13 @@ class SDModel(nn.Module):
         encoder_hidden_states = self.text_encoder(txt)
         # Do dropout to null conditioning
         lbs = encoder_hidden_states.size(0)
-        mask = (torch.rand(lbs,
+        mask = (torch.rand((lbs, 1, 1),
                            device=encoder_hidden_states.device) > self.cond_dropout)
-        uncond_hidden_states =self.encoder_hidden_states_UC.to(encoder_hidden_states.device).repeat(lbs, 1, 1)
+
+        _, l, d = encoder_hidden_states.size()
+        mask = mask.repeat(1, l, d)
+
+        uncond_hidden_states = self.encoder_hidden_states_UC.to(encoder_hidden_states.device).repeat(lbs, 1, 1).detach()
         encoder_hidden_states = torch.where(mask, 
                                             encoder_hidden_states,
                                             uncond_hidden_states)

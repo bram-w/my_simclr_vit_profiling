@@ -106,7 +106,6 @@ class CLIP(nn.Module):
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
         self.initialize_parameters()
-        print("TODO: freeze text encoder")
 
     def initialize_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
