@@ -36,7 +36,7 @@ from utils import SmoothedValue
 import my_webdataset as wds
 from my_webdataset import DataPipeline, WebLoader
 import slip_models
-# from tokenizer import SimpleTokenizer
+from tokenizer import SimpleTokenizer
 
 ####
 import transformers
@@ -128,8 +128,7 @@ def load_training_data():
                     padding="max_length",
                                       max_length=tokenizer.model_max_length,
                                       truncation=True,
-                                      return_tensors='pt').input_ids
-
+                                      return_tensors='pt').input_ids.squeeze()
     train_dataset = DataPipeline(
          wds.ResampledShards(train_shards),
         # we now have an iterator over all shards
@@ -138,7 +137,8 @@ def load_training_data():
         wds.decode("pil", handler=wds.warn_and_continue),
         # we now have a list of decompressed train samples from each shard in this worker, in sequence
         wds.to_tuple("ppm;jpg;jpeg;png", "txt", handler=wds.warn_and_continue),
-        wds.map_tuple(viz_transform, lambda s: torch.Tensor(tokenizer_call(s)), handler=wds.warn_and_continue),
+        # wds.map_tuple(viz_transform, tokenizer_call, handler=wds.warn_and_continue),
+        wds.map_tuple(viz_transform, lambda x: torch.randint(low=0, high=10000, size=(77,)), handler=wds.warn_and_continue),
         wds.batched(local_batch_size),
         )# .with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
     train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
@@ -339,6 +339,7 @@ def train():
 
     logs = []
     log_file = f'log_{cfg.ckpt_prefix}.txt'
+    synchronize()
     while epoch <= num_epochs:
         master_print(f"starting epoch {epoch}")
         time_b = time.time()
@@ -346,7 +347,6 @@ def train():
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
         for step, (img, txt) in enumerate(train_loader):
-            print(step, iters_per_epoch, cfg.log_step_interval)
             # forward pass
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler is not None):
