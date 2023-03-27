@@ -87,7 +87,14 @@ class SDModel(nn.Module):
         
         # print(img)
         # print(txt)
-        encoder_hidden_states = self.text_encoder(txt)
+        # print(img.device)
+        tokenized_txt = self.tokenizer(
+                                      txt, # ['asdf']*4,
+                                      padding="max_length",
+                                      max_length=self.tokenizer.model_max_length,
+                                      truncation=True,
+                                      return_tensors='pt').input_ids.to(self.unet.device)
+        encoder_hidden_states = self.text_encoder(tokenized_txt)
         # Do dropout to null conditioning
         lbs = encoder_hidden_states.size(0)
         mask = (torch.rand((lbs, 1, 1),
@@ -112,6 +119,7 @@ class SDModel(nn.Module):
         timesteps = timesteps.long()
         noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
 
+        
 
         noise_pred = self.unet(noisy_latents,
                           timesteps, 

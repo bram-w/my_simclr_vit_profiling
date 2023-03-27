@@ -104,7 +104,7 @@ def load_training_data():
             return [None] * train_dataset_len, train_loader, train_sampler
         else:
             from fake_data import fake_data
-            return [None] * train_dataset_len, fake_data(train_dataset_len, local_batch_size), None
+            return [None] * train_dataset_len, fake_data(train_dataset_len, local_batch_size, str_cond=True), None
     master_print(f"loading images from : {cfg.data_dir}")
     tokenizer = transformers.CLIPTokenizer.from_pretrained(
         cfg.model_name, subfolder="tokenizer", revision=None
@@ -138,7 +138,8 @@ def load_training_data():
         # we now have a list of decompressed train samples from each shard in this worker, in sequence
         wds.to_tuple("ppm;jpg;jpeg;png", "txt", handler=wds.warn_and_continue),
         # wds.map_tuple(viz_transform, tokenizer_call, handler=wds.warn_and_continue),
-        wds.map_tuple(viz_transform, lambda x: torch.randint(low=0, high=10000, size=(77,)), handler=wds.warn_and_continue),
+        # wds.map_tuple(viz_transform, lambda x: torch.randint(low=0, high=10000, size=(77,)), handler=wds.warn_and_continue),
+        wds.map_tuple(viz_transform, lambda x: x, handler=wds.warn_and_continue),
         wds.batched(local_batch_size),
         )# .with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
     train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
