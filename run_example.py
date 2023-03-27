@@ -295,7 +295,7 @@ def train():
         betas=(0.9, 0.98)
     )
 
-    iters_per_epoch = train_dataset_len / batch_size
+    iters_per_epoch = train_dataset_len / batch_size if (not cfg.iters_per_epoch) else cfg.iters_per_epoch
     lr_scheduler = get_warmup_to_constant_scheduler(
         optimizer,
         warmup_iteration=cfg.warmup_steps / batch_ratio,
@@ -346,6 +346,7 @@ def train():
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
         for step, (img, txt) in enumerate(train_loader):
+            print(step, iters_per_epoch, cfg.log_step_interval)
             # forward pass
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler is not None):

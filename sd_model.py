@@ -63,7 +63,7 @@ class SDModel(nn.Module):
             subfolder="tokenizer",
             revision=None
             )
-        self.cond_dropout = 0.1
+        self.cond_dropout = cond_dropout
         
         # slow startup on cpu but not sure how to handle on DDP
         self.initialize_uncond_hidden_states()
