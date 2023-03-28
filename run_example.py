@@ -278,6 +278,7 @@ def train():
     
     
     # https://github.com/CompVis/latent-diffusion/issues/52#issuecomment-1229188761
+    # https://github.com/CompVis/stable-diffusion/issues/452
     # Noting that scale LR seems weird
     # Also some people recommend Adam over AdamW
     
