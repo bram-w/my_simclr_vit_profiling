@@ -2,10 +2,10 @@ import os
 import subprocess
 import socket
 from itertools import chain
+import time
 
 import torch
 from torch import distributed as dist
-
 
 try:
     import torch_xla.core.xla_model as xm
@@ -271,6 +271,11 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
     if scaler is not None:
         ckpt["scaler"] = scaler.state_dict()
     if is_xla():
+        # hack until I find how to up rendezvous timeout
+        if not is_master():
+            non_master_sleep = 240
+            print(f"Non-masters sleeping {non_master_sleep}s to avoid timeout") 
+            time.sleep(non_master_sleep) # saving took several minutes too long
         xm.save(ckpt, ckpt_path, global_master=True)
     else:
         if is_master():
