@@ -6,7 +6,7 @@ import os
 import pprint
 import time
 import json
-
+from glob import glob
 
 import torch
 import torchvision
@@ -121,14 +121,16 @@ def load_training_data():
     # num_dataset_instances = xm.xrt_world_size() * cfg.num_workers
     num_dataset_instances = world_size * cfg.num_workers
     epoch_size = train_dataset_len // num_dataset_instances
+    
+    if 'cc12m' in cfg.data_dir:
+        train_shards = cfg.data_dir + "/cc12m-{000000..009819}.tar"
+    elif 'laion' in cfg.data_dir: # /mnt/sfr-laion400m-data-ssd-pv-us-central1-a/laion115m_capfilt_20220817
+        train_shards = glob(os.path.join(cfg.data_dir, "*", "*.tar"))
+    else:
+        raise NotImplementedError
+    # print(list(train_shards))
 
-    train_shards = cfg.data_dir + "/cc12m-{000000..009819}.tar"
-
-    tokenizer_call = lambda s: tokenizer(s,
-                    padding="max_length",
-                                      max_length=tokenizer.model_max_length,
-                                      truncation=True,
-                                      return_tensors='pt').input_ids.squeeze()
+    cap_transform = (lambda x: x[0]) if 'laion' in cfg.data_dir else (lambda x: x)
     train_dataset = DataPipeline(
          wds.ResampledShards(train_shards),
         # we now have an iterator over all shards
@@ -136,10 +138,10 @@ def load_training_data():
         wds.shuffle(10000, handler=wds.warn_and_continue),
         wds.decode("pil", handler=wds.warn_and_continue),
         # we now have a list of decompressed train samples from each shard in this worker, in sequence
-        wds.to_tuple("ppm;jpg;jpeg;png", "txt", handler=wds.warn_and_continue),
+        wds.to_tuple("ppm;jpg;jpeg;png", "txt;json", handler=wds.warn_and_continue),
         # wds.map_tuple(viz_transform, tokenizer_call, handler=wds.warn_and_continue),
         # wds.map_tuple(viz_transform, lambda x: torch.randint(low=0, high=10000, size=(77,)), handler=wds.warn_and_continue),
-        wds.map_tuple(viz_transform, lambda x: x, handler=wds.warn_and_continue),
+        wds.map_tuple(viz_transform, cap_transform, handler=wds.warn_and_continue),
         wds.batched(local_batch_size),
         )# .with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
     train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
@@ -289,18 +291,17 @@ def train():
     # For now just scale LR by num_datapoints / 2048
     # BS for us will be much lower, could adjust steps accordingly
     # but shouldn't matter for initial training signal
-    batch_ratio = cfg.batch_size / 2048
     optimizer = torch.optim.AdamW(
         model.parameters(),
         weight_decay=cfg.weight_decay,
-        lr=cfg.lr * batch_ratio,
+        lr=cfg.lr,
         betas=(0.9, 0.98)
     )
 
     iters_per_epoch = train_dataset_len / batch_size if (not cfg.iters_per_epoch) else cfg.iters_per_epoch
     lr_scheduler = get_warmup_to_constant_scheduler(
         optimizer,
-        warmup_iteration=cfg.warmup_steps / batch_ratio,
+        warmup_iteration=cfg.warmup_steps, #  / batch_ratio,
     )
     scaler = None
     if cfg.use_pytorch_amp:
