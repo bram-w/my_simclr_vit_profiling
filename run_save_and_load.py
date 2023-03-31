@@ -183,7 +183,7 @@ def train():
     num_epochs = cfg.num_epochs
     assert batch_size % get_world_size() == 0
     train_dataset, train_loader, train_sampler = load_training_data()
-    local_batch_size = batch_size // get_world_size()
+    
     
     model = SDModel(cond_dropout=cfg.cond_dropout,
                    pretrained_unet=cfg.pretrained_unet)
@@ -263,6 +263,7 @@ def train():
             output_device=cfg.device_id, find_unused_parameters=True
         )
         """
+    # torch.manual_seed(get_rank())
     """
     OLD OPTIM CODE
     p_wd, p_non_wd = [], []
@@ -295,6 +296,7 @@ def train():
         model.parameters(),
         weight_decay=cfg.weight_decay,
         lr=cfg.lr,
+        betas=(0.9, 0.98)
     )
 
     iters_per_epoch = train_dataset_len / batch_size if (not cfg.iters_per_epoch) else cfg.iters_per_epoch
@@ -346,12 +348,6 @@ def train():
 
     logs = []
     log_file = f'log_{cfg.ckpt_prefix}.txt'
-    # print(get_rank())
-    torch.manual_seed(get_rank())
-    # print(torch.randint(0, cfg.num_noise_steps, (local_batch_size,)))
-    # print(torch.get_rng_state())
-    xm.set_rng_state(get_rank(), xm.xla_device())
-    print(xm.get_rng_state(xm.xla_device()))
     synchronize()
     while epoch <= num_epochs:
         master_print(f"starting epoch {epoch}")
@@ -387,15 +383,7 @@ def train():
                 
                 loss = (noise.to(noise_pred.device) - noise_pred).pow(2).mean()
                 """
-                # Doing outside b/c not getting seeding to work inside
-                """
-                timesteps = torch.randint(0, cfg.num_noise_steps,
-                                            (local_batch_size,),
-                                            device=img.device,
-                                            dtype=torch.long)
-                print(timesteps)
-                """
-                loss = model(img, txt) # , timesteps=timesteps)
+                loss = model(img, txt)
             # backward pass
             if scaler is not None:
                 scaler.scale(loss).backward()
@@ -410,7 +398,7 @@ def train():
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                optimizer.step()
+                pass # optimizer.step()
             lr_scheduler.step()
 
             if (step+1 ) % cfg.log_step_interval == 0 or step==0:
@@ -421,7 +409,6 @@ def train():
                         f"loss: {reduced_loss:.7f}, "
                         f"elapsed time: {time.time() - time_b} sec"
                 )
-
             # add termination on steps
             if ((step+1)%int(iters_per_epoch))==0:
 
@@ -438,9 +425,8 @@ def train():
                         cfg.ckpt_dir, f"{cfg.ckpt_prefix}_epoch_{epoch}.ckpt"
                     )
                     meta_data = {"cfg": cfg, "epoch": epoch}
-                    master_print("Saving ckpt")
-                    # save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data)
-                    save_ckpt(ckpt_path, model, lr_scheduler, lr_scheduler, scaler, meta_data)
+                    save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data)
+                    # save_ckpt(ckpt_path, model, lr_scheduler, lr_scheduler, scaler, meta_data)
                 epoch += 1
                 time_b = time.time()
                 if epoch>num_epochs:

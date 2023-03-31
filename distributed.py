@@ -6,7 +6,10 @@ import time
 
 import torch
 from torch import distributed as dist
+from smart_open import open as smart_open
+from io import BytesIO
 
+from google.cloud import storage
 try:
     import torch_xla.core.xla_model as xm
 except ImportError:
@@ -261,7 +264,7 @@ def distributed_init(cfg, device_id):
     cfg.rank = dist.get_rank()
 
 
-def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
+def save_ckpt_backup(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
     ckpt = {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -272,17 +275,103 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
         ckpt["scaler"] = scaler.state_dict()
     if is_xla():
         # hack until I find how to up rendezvous timeout
-        if not is_master():
-            non_master_sleep = 240
-            print(f"Non-masters sleeping {non_master_sleep}s to avoid timeout") 
-            time.sleep(non_master_sleep) # saving took several minutes too long
-        xm.save(ckpt, ckpt_path, global_master=True)
+        # if not is_master():
+        #     non_master_sleep = 240
+        #     print(f"Non-masters sleeping {non_master_sleep}s to avoid timeout") 
+        #     time.sleep(non_master_sleep) # saving took several minutes too long
+        if 'gs://' in ckpt_path:
+            gcs_path = ckpt_path.replace('gs://', '')
+            bucket_name = gcs_path.split('/')[0]
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(bucket_name)
+            # print("Making blob")
+            blob = bucket.blob('/'.join(gcs_path.split('/')[1:]))
+            if is_master():
+                # print("Master saving")
+                with blob.open('wb', ignore_flush=True) as f:
+                    cpu_ckpt = xm._maybe_convert_to_cpu(ckpt)
+                    torch.save(cpu_ckpt, f) # switched to xm save but I think open was instantiating file
+                    # xm.save(ckpt, f, global_master=True) # switched to xm save
+            # print("waiting for sync")
+            """
+            # Alternative
+            if is_master():
+                with smart_open(ckpt_path, 'wb') as f:
+                    cpu_ckpt = xm._maybe_convert_to_cpu(ckpt)
+                    torch.save(cpu_ckpt, f) # switched to xm save but I think open was instantiating file
+                    # torch.save(
+            """
+            synchronize()
+        else:
+            xm.save(ckpt, ckpt_path, global_master=True)
     else:
         if is_master():
-            torch.save(ckpt, ckpt_path)
+            torch.save(ckpt, f)
 
     master_print(f"checkpoint saved to {ckpt_path}")
 
+def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
+    ckpt = {
+        "model": model.state_dict(),
+        "lr_scheduler": lr_scheduler.state_dict(),
+        "meta_data": meta_data,
+    }
+    ckpt_opt = {"optimizer": optimizer.state_dict()}
+
+    if scaler is not None:
+        ckpt["scaler"] = scaler.state_dict()
+    if is_xla():
+        # hack until I find how to up rendezvous timeout
+        # if not is_master():
+        #     non_master_sleep = 240
+        #     print(f"Non-masters sleeping {non_master_sleep}s to avoid timeout") 
+        #     time.sleep(non_master_sleep) # saving took several minutes too long
+        if 'gs://' in ckpt_path:
+            gcs_path = ckpt_path.replace('gs://', '')
+            bucket_name = gcs_path.split('/')[0]
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(bucket_name)
+            # print("Making blob")
+
+
+            blob = bucket.blob('/'.join(gcs_path.split('/')[1:]))
+            if is_master():
+                # print("Master saving")
+                with blob.open('wb', ignore_flush=True) as f:
+                    master_print("to cpu")
+                    cpu_ckpt = xm._maybe_convert_to_cpu(ckpt)
+                    master_print("Saving step")
+                    torch.save(cpu_ckpt, f) # switched to xm save but I think open was instantiating file
+                    # xm.save(ckpt, f, global_master=True) # switched to xm save
+
+
+            gcs_path = gcs_path.replace('.ckpt', '_opt.ckpt')
+            blob = bucket.blob('/'.join(gcs_path.split('/')[1:]))
+            if is_master():
+                # print("Master saving")
+                with blob.open('wb', ignore_flush=True) as f:
+                    master_print("opt to cpu")
+                    cpu_ckpt = xm._maybe_convert_to_cpu(ckpt_opt)
+                    master_print("opt saving step")
+                    torch.save(cpu_ckpt, f) # switched to xm save but I think open was instantiating file
+                    # xm.save(ckpt, f, global_master=True) # switched to xm save
+            # print("waiting for sync")
+            """
+            # Alternative
+            if is_master():
+                with smart_open(ckpt_path, 'wb') as f:
+                    cpu_ckpt = xm._maybe_convert_to_cpu(ckpt)
+                    torch.save(cpu_ckpt, f) # switched to xm save but I think open was instantiating file
+                    # torch.save(
+            """
+            synchronize()
+        else:
+            xm.save(ckpt, ckpt_path, global_master=True)
+    else:
+        if is_master():
+            torch.save(ckpt, f)
+
+    master_print(f"checkpoint saved to {ckpt_path}")
 
 
 def is_part_of_text_sd(k):
@@ -307,12 +396,29 @@ def load_text_model_ckpt(ckpt_path, model):
 def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler,
               load_model_ckpt_only=False):
     from config import cfg
+    print(ckpt_path)
+    """
+    with smart_open(ckpt_path, 'rb') as f:
+        # buffer_ = BytesIO(f.read())
+        if is_xla():
+            ckpt = torch.load(BytesIO(f.read()), map_location="cpu")
+        else:
+            ckpt = torch.load(BytesIO(f.read()), map_location=f"cuda:{cfg.device_id}")
+    """
 
     if is_xla():
-        ckpt = torch.load(ckpt_path, map_location="cpu")
+        if 'gs://' in ckpt_path:
+            gcs_path = ckpt_path.replace('gs://', '')
+            bucket_name = gcs_path.split('/')[0]
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob('/'.join(gcs_path.split('/')[1:]))
+            with blob.open('rb') as f:
+                ckpt = torch.load(f, map_location="cpu")
+        else:
+            ckpt = torch.load(ckpt_path, map_location="cpu")
     else:
         ckpt = torch.load(ckpt_path, map_location=f"cuda:{cfg.device_id}")
-
     model.load_state_dict(ckpt["model"])
     if not load_model_ckpt_only:
         optimizer.load_state_dict(ckpt["optimizer"])

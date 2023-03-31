@@ -25,6 +25,8 @@ from tqdm import tqdm
 # import clip
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
 
+
+
 class SDModel(nn.Module):
     """
     This is very similar to diffusers StableDiffusionPipeline
@@ -68,7 +70,6 @@ class SDModel(nn.Module):
         # slow startup on cpu but not sure how to handle on DDP
         self.initialize_uncond_hidden_states()
         
-        
     def initialize_uncond_hidden_states(self):
         
         with torch.no_grad():
@@ -82,7 +83,12 @@ class SDModel(nn.Module):
 
             self.encoder_hidden_states_UC = self.text_encoder(uncond_tokenized_inputs).detach()
         
-    def forward(self, img, txt):
+    def train(self, mode=True):
+        super(SDModel, self).train(mode=mode)
+        self.vae.eval()
+        self.text_encoder.eval()
+
+    def forward(self, img, txt, timesteps=None):
         # Maybe could check if above is initialized but avoiding if/else
         
         # print(img)
@@ -113,12 +119,14 @@ class SDModel(nn.Module):
         latents = self.vae.encode(img).latent_dist.sample() * self.latent_scale
 
         noise = torch.randn_like(latents)
-        timesteps = torch.randint(0, self.scheduler.num_train_timesteps,
-                                  (noise.size(0),),
-                                  device=latents.device)
-        timesteps = timesteps.long()
+        if timesteps is None:
+            timesteps = torch.randint(0, self.scheduler.num_train_timesteps,
+                                      (noise.size(0),),
+                                      device=latents.device)
+            timesteps = timesteps.long()
         noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
 
+        print(txt, timesteps)
         
 
         noise_pred = self.unet(noisy_latents,
