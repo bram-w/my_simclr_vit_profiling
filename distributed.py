@@ -311,6 +311,7 @@ def save_ckpt_backup(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_dat
     master_print(f"checkpoint saved to {ckpt_path}")
 
 def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
+    ####### Can put ckpts together again if CPU fix works ####### 
     ckpt = {
         "model": model.state_dict(),
         "lr_scheduler": lr_scheduler.state_dict(),
@@ -346,7 +347,8 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
                     torch.save(cpu_ckpt, f) # switched to xm save but I think open was instantiating file
                     # xm.save(ckpt, f, global_master=True) # switched to xm save
 
-
+            
+            ######### Can comment out below if both work and can put together again #######
             gcs_path = gcs_path.replace('.ckpt', '_opt.ckpt')
             blob = bucket.blob('/'.join(gcs_path.split('/')[1:]))
             master_print("opt to cpu")
@@ -358,6 +360,7 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
                     torch.save(cpu_ckpt_opt, f) # switched to xm save but I think open was instantiating file
                     # xm.save(ckpt, f, global_master=True) # switched to xm save
             # print("waiting for sync")
+            ############################
             """
             # Alternative
             if is_master():
