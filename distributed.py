@@ -310,12 +310,79 @@ def save_ckpt_backup(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_dat
 
     master_print(f"checkpoint saved to {ckpt_path}")
 
+def sd_to_cpu(sd):
+    return {k:v.cpu() for k,v in sd.items()}
+
+def hacked_xla_save(data, file_or_path, master_only=True, global_master=False):
+  """Saves the input data into a file.
+
+  The saved data is transfered to PyTorch CPU device before being saved, so a
+  following `torch.load()` will load CPU data.
+
+  Args:
+    data: The input data to be saved. Any nested combination of Python objects
+      (list, tuples, sets, dicts, ...).
+    file_or_path: The destination for the data saving operation. Either a file
+      path or a Python file object. If `master_only` is ``False`` the path or
+      file objects must point to different destinations as otherwise all the
+      writes from the same host will override each other.
+    master_only (bool, optional): Whether only the master device should save the
+      data. If False, the `file_or_path` argument should be a different file or
+      path for each of the ordinals taking part to the replication, otherwise
+      all the replicas on the same host will be writing to the same location.
+      Default: True
+    global_master (bool, optional): When ``master_only`` is ``True`` this flag
+      controls whether every host's master (if ``global_master`` is ``False``)
+      saves the content, or only the global master (ordinal 0).
+      Default: False
+  """
+  print("Determining should_Write")
+  should_write_data = not master_only or xm.is_master_ordinal(
+      local=not global_master)
+  print("Pushing to cpu")
+  cpu_data = xm._maybe_convert_to_cpu(data, convert=should_write_data)
+  print("starting 'master' block")
+  if should_write_data:
+    if 'gs://' in file_or_path:
+        gcs_path = file_or_path.replace('gs://', '')
+        bucket_name = gcs_path.split('/')[0]
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob('/'.join(gcs_path.split('/')[1:]))
+        print("Opening blob")
+        with blob.open('wb', ignore_flush=True) as f:
+            print("Actually saving")
+            torch.save(cpu_data, f)
+  print("Rendezou")
+  xm.rendezvous('torch_xla.core.xla_model.save')
+
 def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
-    ####### Can put ckpts together again if CPU fix works ####### 
+    print("Creatin ckpt")
     ckpt = {
         "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
         "lr_scheduler": lr_scheduler.state_dict(),
         "meta_data": meta_data,
+    }
+    if scaler is not None:
+        ckpt["scaler"] = scaler.state_dict()
+    if is_xla():
+        print("USing hacked xla save")
+        hacked_xla_save(ckpt, ckpt_path, global_master=True)
+    else:
+        if is_master():
+            torch.save(ckpt, f)
+
+    master_print(f"checkpoint saved to {ckpt_path}")
+
+
+
+def save_ckpt_hangs_on_cpu_push(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
+    ####### Can put ckpts together again if CPU fix works ####### 
+    ckpt = {
+        "model": sd_to_cpu(model.state_dict()),
+        "lr_scheduler": sd_to_cpu(lr_scheduler.state_dict()),
+        "meta_data": sd_to_cpu(meta_data),
     }
     ckpt_opt = {"optimizer": optimizer.state_dict()}
 
@@ -332,14 +399,13 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
             bucket_name = gcs_path.split('/')[0]
             storage_client = storage.Client()
             bucket = storage_client.bucket(bucket_name)
-            # print("Making blob")
-
-
             blob = bucket.blob('/'.join(gcs_path.split('/')[1:]))
+            print(f"(all print) saving to ckpt_path")
             master_print("to cpu")
             # Could be smarter with this and conditionally push but keeping basic for now
             # Breaking out of is_master per https://github.com/pytorch/xla/issues/945#issuecomment-525781994
-            cpu_ckpt = xm._maybe_convert_to_cpu(ckpt)
+            cpu_ckpt = ckpt # xm._maybe_convert_to_cpu(ckpt)
+            print("Start is_master split")
             if is_master():
                 print("Master saving")
                 with blob.open('wb', ignore_flush=True) as f:

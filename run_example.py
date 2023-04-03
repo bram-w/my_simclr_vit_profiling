@@ -439,8 +439,8 @@ def train():
                     )
                     meta_data = {"cfg": cfg, "epoch": epoch}
                     master_print("Saving ckpt")
-                    # save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data)
-                    save_ckpt(ckpt_path, model, lr_scheduler, lr_scheduler, scaler, meta_data)
+                    save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data)
+                    # save_ckpt(ckpt_path, model, lr_scheduler, lr_scheduler, scaler, meta_data)
                 epoch += 1
                 time_b = time.time()
                 if epoch>num_epochs:
@@ -466,9 +466,14 @@ if __name__ == "__main__":
     config.cfg = config.build_cfg_from_argparse()
 
     if is_xla():
-        tpu_cores_per_node = 8
-        xmp.spawn(main, args=(config.cfg,), nprocs=tpu_cores_per_node,
-                start_method='fork')
+        if False:
+            # changed for v4 but pytorch 2.0 seemed to fix
+            tpu_cores_per_node = 1 # CHANGED FOR V4
+            main(0, config.cfg)
+        else:
+            tpu_cores_per_node = None # was 8 for 3
+            xmp.spawn(main, args=(config.cfg,), nprocs=tpu_cores_per_node,
+                    start_method='fork')
     else:
         infer_init_method(config.cfg)
         if config.cfg.no_spawn:
