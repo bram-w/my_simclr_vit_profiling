@@ -335,11 +335,13 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
 
 
             blob = bucket.blob('/'.join(gcs_path.split('/')[1:]))
+            master_print("to cpu")
+            # Could be smarter with this and conditionally push but keeping basic for now
+            # Breaking out of is_master per https://github.com/pytorch/xla/issues/945#issuecomment-525781994
+            cpu_ckpt = xm._maybe_convert_to_cpu(ckpt)
             if is_master():
-                # print("Master saving")
+                print("Master saving")
                 with blob.open('wb', ignore_flush=True) as f:
-                    master_print("to cpu")
-                    cpu_ckpt = xm._maybe_convert_to_cpu(ckpt)
                     master_print("Saving step")
                     torch.save(cpu_ckpt, f) # switched to xm save but I think open was instantiating file
                     # xm.save(ckpt, f, global_master=True) # switched to xm save
@@ -347,13 +349,13 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
 
             gcs_path = gcs_path.replace('.ckpt', '_opt.ckpt')
             blob = bucket.blob('/'.join(gcs_path.split('/')[1:]))
+            master_print("opt to cpu")
+            cpu_ckpt_opt = xm._maybe_convert_to_cpu(ckpt_opt)
             if is_master():
-                # print("Master saving")
+                print("Master opt saving")
                 with blob.open('wb', ignore_flush=True) as f:
-                    master_print("opt to cpu")
-                    cpu_ckpt = xm._maybe_convert_to_cpu(ckpt_opt)
                     master_print("opt saving step")
-                    torch.save(cpu_ckpt, f) # switched to xm save but I think open was instantiating file
+                    torch.save(cpu_ckpt_opt, f) # switched to xm save but I think open was instantiating file
                     # xm.save(ckpt, f, global_master=True) # switched to xm save
             # print("waiting for sync")
             """
