@@ -1,7 +1,6 @@
 """
 Saves to ckpts via master but can't read
 """
-
 import os
 import pprint
 import time
@@ -131,7 +130,8 @@ def load_training_data():
         raise NotImplementedError
     # print(list(train_shards))
 
-    cap_transform = (lambda x: x[0]) if 'laion' in cfg.data_dir else (lambda x: x)
+    cap_transform = laion_cap_transform if 'laion' in cfg.data_dir else cc12m_cap_transform
+
     train_dataset = DataPipeline(
          wds.ResampledShards(train_shards),
         # we now have an iterator over all shards
@@ -154,6 +154,12 @@ def load_training_data():
     master_print("data loading done!")
 
     return train_dataset, train_loader, train_sampler
+
+def laion_cap_transform(x):
+    return x[0]
+
+def cc12m_cap_transform(x):
+    return x
 
 def collate_fn(input_list):
     """
@@ -350,8 +356,9 @@ def train():
     torch.manual_seed(get_rank())
     # print(torch.randint(0, cfg.num_noise_steps, (local_batch_size,)))
     # print(torch.get_rng_state())
-    xm.set_rng_state(get_rank(), xm.xla_device())
-    print(xm.get_rng_state(xm.xla_device()))
+    if is_xla():
+        xm.set_rng_state(get_rank(), xm.xla_device())
+        print(xm.get_rng_state(xm.xla_device()))
     synchronize()
     while epoch <= num_epochs:
         master_print(f"starting epoch {epoch}")

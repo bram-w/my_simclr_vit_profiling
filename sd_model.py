@@ -94,39 +94,38 @@ class SDModel(nn.Module):
         # print(img)
         # print(txt)
         # print(img.device)
-        tokenized_txt = self.tokenizer(
-                                      txt, # ['asdf']*4,
-                                      padding="max_length",
-                                      max_length=self.tokenizer.model_max_length,
-                                      truncation=True,
-                                      return_tensors='pt').input_ids.to(self.unet.device)
-        encoder_hidden_states = self.text_encoder(tokenized_txt)
-        # Do dropout to null conditioning
-        lbs = encoder_hidden_states.size(0)
-        mask = (torch.rand((lbs, 1, 1),
-                           device=encoder_hidden_states.device) > self.cond_dropout)
+        with torch.no_grad():
+            tokenized_txt = self.tokenizer(
+                                          txt, # ['asdf']*4,
+                                          padding="max_length",
+                                          max_length=self.tokenizer.model_max_length,
+                                          truncation=True,
+                                          return_tensors='pt').input_ids.to(self.unet.device)
+            encoder_hidden_states = self.text_encoder(tokenized_txt)
+            # Do dropout to null conditioning
+            lbs = encoder_hidden_states.size(0)
+            mask = (torch.rand((lbs, 1, 1),
+                               device=encoder_hidden_states.device) > self.cond_dropout)
 
-        _, l, d = encoder_hidden_states.size()
-        mask = mask.repeat(1, l, d)
+            _, l, d = encoder_hidden_states.size()
+            mask = mask.repeat(1, l, d)
 
-        uncond_hidden_states = self.encoder_hidden_states_UC.to(encoder_hidden_states.device).repeat(lbs, 1, 1).detach()
-        encoder_hidden_states = torch.where(mask, 
-                                            encoder_hidden_states,
-                                            uncond_hidden_states)
-        
-        
-        # Not sure if scaling is right
-        latents = self.vae.encode(img).latent_dist.sample() * self.latent_scale
+            uncond_hidden_states = self.encoder_hidden_states_UC.to(encoder_hidden_states.device).repeat(lbs, 1, 1).detach()
+            encoder_hidden_states = torch.where(mask, 
+                                                encoder_hidden_states,
+                                                uncond_hidden_states)
+            # Not sure if scaling is right
+            latents = self.vae.encode(img).latent_dist.sample() * self.latent_scale
 
-        noise = torch.randn_like(latents)
-        if timesteps is None:
-            timesteps = torch.randint(0, self.scheduler.num_train_timesteps,
-                                      (noise.size(0),),
-                                      device=latents.device)
-            timesteps = timesteps.long()
-        noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
+            noise = torch.randn_like(latents)
+            if timesteps is None:
+                timesteps = torch.randint(0, self.scheduler.num_train_timesteps,
+                                          (noise.size(0),),
+                                          device=latents.device)
+                timesteps = timesteps.long()
+            noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
 
-        print(txt, timesteps)
+        # print(txt, timesteps)
         
 
         noise_pred = self.unet(noisy_latents,
