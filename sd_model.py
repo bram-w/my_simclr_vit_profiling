@@ -23,7 +23,7 @@ import slip_models
 import transformers
 from tqdm import tqdm
 # import clip
-from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
+from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, DDIMScheduler
 
 from aesthetic_model import AestheticScorer
 
@@ -70,7 +70,7 @@ class AestheticWeighting(nn.Module):
 
     
 
-def create_sd_model(weighting_model_name, **kwargs):
+def create_sd_model(weighting_model_name='', num_chain_timesteps=1, **kwargs):
     if weighting_model_name:
         if 'clip' in weighting_model_name:
             weighting_module = CLIPWeighting(clip_model_name=weighting_model_name)
@@ -80,7 +80,13 @@ def create_sd_model(weighting_model_name, **kwargs):
             raise NotImplementedError
     else:
         weighting_module = None
-    return SDModel(weighting_module=weighting_module, **kwargs)
+
+    if num_chain_timesteps > 1:
+        return FullChainSDModel(weighting_module=weighting_module,
+                                num_timesteps=num_chain_timesteps,
+                                **kwargs)
+    else:
+        return SDModel(weighting_module=weighting_module, **kwargs)
 
 class SDModel(nn.Module):
     """
@@ -113,8 +119,9 @@ class SDModel(nn.Module):
             unet_cfg = UNet2DConditionModel.load_config(model_config_name,
                                                         subfolder="unet") 
             self.unet = UNet2DConditionModel.from_config(unet_cfg)
-        
-        self.scheduler = DDPMScheduler.from_pretrained(model_config_name,
+        # Switched to DDIM scheduler. The add_noise and num_train_timesteps are the same
+        # so only difference is scheduler stepping (which we always DDIM for)
+        self.scheduler = DDIMScheduler.from_pretrained(model_config_name,
                                               subfolder='scheduler')
         self.latent_scale = latent_scale
 
@@ -190,7 +197,6 @@ class SDModel(nn.Module):
             encoder_hidden_states = torch.where(mask, 
                                                 encoder_hidden_states,
                                                 uncond_hidden_states)
-            # Not sure if scaling is right
             latents = self.vae.encode(img).latent_dist.sample() * self.latent_scale
 
             noise = torch.randn_like(latents)
@@ -201,22 +207,16 @@ class SDModel(nn.Module):
                 timesteps = timesteps.long()
             noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
 
-        # print(txt, timesteps)
-        
-
         noise_pred = self.unet(noisy_latents,
                           timesteps, 
                          encoder_hidden_states=encoder_hidden_states).sample
 
-        # print(loss_weights.shape, noise.shape, noise_pred.shape)
         per_element_mses = (noise - noise_pred) ** 2
         loss = (loss_weights.view(-1, 1, 1, 1) * per_element_mses).mean() # equivalent to below but admits weighting
         
-        with torch.no_grad():
+        if False: # with torch.no_grad():
             unweighted_loss = per_element_mses.mean()
             print(f"Unweighted Loss: {unweighted_loss.item()} / Weighted Loss: {loss.item()}")
-
-        # loss = F.mse_loss(noise, noise_pred, reduction='mean') 
         return loss
 
     
@@ -285,4 +285,137 @@ class SDModel(nn.Module):
         return image
                                    
             
+class FullChainSDModel(SDModel):
+    """
+    Train multi-diffusion-step objective
+
+    Could maybe subsume into above by renaming forward function and in init setting self.forward?
+    """
+
+    def __init__(self, num_timesteps, **kwargs):
+        super().__init__(**kwargs)
+        self.num_timesteps = num_timesteps
+        self.scheduler.config.steps_offset = (self.scheduler.num_train_timesteps // self.num_timesteps) - 1
+        self.scheduler.set_timesteps(num_timesteps)
+
+    def forward(self, img, txt):
+        with torch.no_grad():
+            loss_weights = self.weighting({"img":img, "txt":txt})
+
+            tokenized_txt = self.tokenizer(
+                                          txt, 
+                                          padding="max_length",
+                                          max_length=self.tokenizer.model_max_length,
+                                          truncation=True,
+                                          return_tensors='pt').input_ids.to(self.unet.device)
+            encoder_hidden_states = self.text_encoder(tokenized_txt)
+            # Do dropout to null conditioning
+            lbs = encoder_hidden_states.size(0)
+            mask = (torch.rand((lbs, 1, 1),
+                               device=encoder_hidden_states.device) > self.cond_dropout)
+
+            _, l, d = encoder_hidden_states.size()
+            mask = mask.repeat(1, l, d)
+
+            uncond_hidden_states = self.encoder_hidden_states_UC.to(encoder_hidden_states.device).repeat(lbs, 1, 1).detach()
+            encoder_hidden_states = torch.where(mask, 
+                                                encoder_hidden_states,
+                                                uncond_hidden_states)
+            latents = self.vae.encode(img).latent_dist.sample() * self.latent_scale
+
+            noise = torch.randn_like(latents)
+
+            # these are 1 2 ... self.num_timesteps
+            timestep_idx = torch.randint(1, self.num_timesteps+1,
+                                      (noise.size(0),),
+                                      device=latents.device)
+            # For 4 timesteps, orig would be 1 2 3 4
+            # below should be 249 499 749 999
+            timesteps = (timestep_idx * self.scheduler.num_train_timesteps / self.num_timesteps) - 1
+            timesteps = timesteps.long()
+            # Will denoise varying amounts
+            noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
+
+
+        # Below was originally single noise pred
+        """
+        noise_pred = self.unet(noisy_latents,
+                          timesteps, 
+                         encoder_hidden_states=encoder_hidden_states).sample
+        per_element_mses = (noise - noise_pred) ** 2
+        """
+        # Now want to do iteratively
+        # And target will be relative to original latents
         
+        for denoising_i in range(self.num_timesteps):
+            # predict based off of current timesteps
+            noise_pred = self.unet(noisy_latents,
+                              timesteps, 
+                             encoder_hidden_states=encoder_hidden_states).sample
+            # step based off of current timesteps
+            # if timestep is <=0 should just ignore
+            noisy_latents = batch_ddim_step(self.scheduler, noise_pred, timesteps, noisy_latents)
+            timesteps = timesteps -  self.scheduler.num_train_timesteps // self.num_timesteps
+
+        per_element_mses = (noisy_latents - latents) ** 2
+        loss = (loss_weights.view(-1, 1, 1, 1) * per_element_mses).mean() # equivalent to below but admits weighting
+        
+        return loss
+
+
+def batch_ddim_step(scheduler, model_output, timesteps, sample,
+                    eta=0.0,
+                    use_clipped_model_output=False):
+    # https://github.com/huggingface/diffusers/blob/v0.8.0/src/diffusers/schedulers/scheduling_ddim.py#L197
+    if scheduler.num_inference_steps is None:
+            raise ValueError(
+                "Number of inference steps is 'None', you need to run 'set_timesteps' after creating the scheduler"
+            )
+    # 1 get pre step value
+    prev_timesteps = timesteps - scheduler.config.num_train_timesteps // scheduler.num_inference_steps
+
+    # 2 alpha/betas
+    # below abs() is hack to make negative numbers not error since they just get replaced
+    alpha_prod_t = scheduler.alphas_cumprod.index_select(0, timesteps.abs())
+    # make broadcastable
+    alpha_prod_t = alpha_prod_t.view(-1, 1, 1, 1)
+    beta_prod_t = 1 - alpha_prod_t
+    # get previous
+    # below abs() is hack to make negative numbers not error since they just get replaced
+    # will make -1 1 etc
+    alpha_prod_t_prev = scheduler.alphas_cumprod.index_select(0, prev_timesteps.abs())
+    alpha_prod_t_prev = torch.where(prev_timesteps>=0, alpha_prod_t_prev, scheduler.final_alpha_cumprod * torch.ones_like(alpha_prod_t_prev) )
+    alpha_prod_t_prev = alpha_prod_t_prev.view_as(alpha_prod_t)
+    beta_prod_t_prev = 1 - alpha_prod_t_prev
+
+    # 3 predict orig sample
+    pred_original_sample = (sample - beta_prod_t ** (0.5) * model_output) / alpha_prod_t ** (0.5)
+
+    # 4 clip prediction
+    if scheduler.config.clip_sample:
+        pred_original_sample = pred_original_sample.clamp(-1, 1)
+
+    # 5 compute variance
+    # originally https://github.com/huggingface/diffusers/blob/v0.8.0/src/diffusers/schedulers/scheduling_ddim.py#L171
+    # all have same shape
+    variance = (beta_prod_t_prev / beta_prod_t) * (1 - alpha_prod_t / alpha_prod_t_prev)
+    std_dev_t = eta * (variance ** 0.5)
+    if use_clipped_model_output:
+        model_output = (sample - (alpha_prod_t**0.5) * pred_original_sample) / (beta_prod_t ** 0.5)
+
+    # 6 compute "direction pointing to x_t"
+    pred_sample_direction = ( (1 - alpha_prod_t_prev - std_dev_t**2) ** 0.5) * model_output
+    # 7 compute x_t 
+    prev_sample = (alpha_prod_t_prev ** 0.5) * pred_original_sample + pred_sample_direction
+
+    if eta > 0:
+        # https://github.com/huggingface/diffusers/blob/v0.8.0/src/diffusers/schedulers/scheduling_ddim.py#L283
+        raise NotImplementedError
+
+    # Want to return prev_sample where timesteps>0 otherwise sample
+    update_mask = (timesteps > 0)
+    update_mask = update_mask.view(-1, 1, 1, 1).repeat(1, *sample.size()[1:])
+
+    return torch.where(update_mask, prev_sample, sample)
+
+

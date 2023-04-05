@@ -191,9 +191,12 @@ def train():
     train_dataset, train_loader, train_sampler = load_training_data()
     local_batch_size = batch_size // get_world_size()
     
-    model = create_sd_model(cond_dropout=cfg.cond_dropout,
+    model = create_sd_model(
+                   weighting_model_name=cfg.weighting_model_name,
+                   num_chain_timesteps=cfg.num_chain_timesteps,
+                   cond_dropout=cfg.cond_dropout,
                    pretrained_unet=cfg.pretrained_unet,
-                   weighting_model_name=cfg.weighting_model_name)
+                   )
    #  model = SDModel(cond_dropout=cfg.cond_dropout,
    #                 pretrained_unet=cfg.pretrained_unet)
         

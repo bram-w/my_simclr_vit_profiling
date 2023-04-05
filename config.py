@@ -32,6 +32,7 @@ cfg.cond_dropout = 0.1
 cfg.pretrained_unet = False
 cfg.image_dim = 256
 cfg.weighting_model_name = ''
+cfg.num_chain_timesteps = 1 # if >1 will train multistep
 
 # --------------------------------------------------------------------------- #
 # data options
