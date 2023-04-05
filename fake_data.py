@@ -25,7 +25,7 @@ class fake_data(object):
         if self.num < self.n/self.lbs:
             self.num += 1
             txt_return = ['asdf']*self.lbs if self.str_cond else torch.randint(low=0, high=10000, size=(self.lbs, 77))
-            return torch.randn(self.lbs, 3, 512, 512), txt_return
+            return torch.zeros(self.lbs, 3, 512, 512), txt_return
         
 
         raise StopIteration()

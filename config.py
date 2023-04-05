@@ -31,6 +31,7 @@ cfg.num_noise_steps = 1000
 cfg.cond_dropout = 0.1
 cfg.pretrained_unet = False
 cfg.image_dim = 256
+cfg.weighting_model_name = ''
 
 # --------------------------------------------------------------------------- #
 # data options

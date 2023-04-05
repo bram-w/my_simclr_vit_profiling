@@ -25,7 +25,62 @@ from tqdm import tqdm
 # import clip
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
 
+from aesthetic_model import AestheticScorer
 
+class CLIPWeighting(nn.Module):
+    """
+    Reward from CLIP
+    """
+    def __init__(self, clip_model_name='openai/clip-vit-base-patch32'):
+        super().__init__()
+        self.model = transformers.CLIPModel.from_pretrained(clip_model_name)
+        self.processor = transformers.AutoProcessor.from_pretrained(clip_model_name)
+        #### continue, see shell on L ###
+
+    def forward(self, inputs): # img, txt):
+        img = inputs['img']
+        txt = inputs['txt']
+        # img = inputs['img']
+        # inputs are normalized to [-1, 1]
+        img = 0.5 * (img + 1)
+        
+        # clip_inputs = self.processor(inputs['txt'], images=img, return_tensors='pt', padding=True)
+        clip_inputs = self.processor(txt, images=img, return_tensors='pt', padding=True)
+        # These are the cosine sim * 100
+        # sims = self.model(**clip_inputs).logits_per_image.diag()
+        sims = self.model(input_ids=clip_inputs['input_ids'].to(self.model.device),
+                         pixel_values=clip_inputs['pixel_values'].to(self.model.device),
+                         attention_mask=clip_inputs['attention_mask'].to(self.model.device)).logits_per_image.diag()
+
+        return sims
+
+
+class AestheticWeighting(nn.Module):
+    """
+    Reward from aesthetic model
+    """
+    def __init__(self, aes_model_name):
+        # format of aes_model_name is aes-vit_l_14 / aes-vit_b_32
+        super().__init__()
+        self.aes_model = AestheticScorer(aes_model_name.split('-')[1])
+
+    def forward(self, inputs):
+        # scorer expects things in -1 to 1 like it's getting handed
+        return self.aes_model(inputs['img'])
+
+    
+
+def create_sd_model(weighting_model_name, **kwargs):
+    if weighting_model_name:
+        if 'clip' in weighting_model_name:
+            weighting_module = CLIPWeighting(clip_model_name=weighting_model_name)
+        elif 'aes' in weighting_model_name:
+            weighting_module = AestheticWeighting(aes_model_name=weighting_model_name)
+        else:
+            raise NotImplementedError
+    else:
+        weighting_module = None
+    return SDModel(weighting_module=weighting_module, **kwargs)
 
 class SDModel(nn.Module):
     """
@@ -36,16 +91,20 @@ class SDModel(nn.Module):
                 model_config_name="CompVis/stable-diffusion-v1-4",
                 latent_scale = 0.18215,
                 pretrained_unet=False,
-                 cond_dropout=0.1
+                 cond_dropout=0.1,
+                 weighting_module=None, # For reward training
                 ):
         super().__init__()
         # print("TODO: Freeze VAE + Text encoder")
-        print("TODO: Does Unet need better init?")
+        # print("TODO: Does Unet need better init?") # seems to converge OK
         self.vae = AutoencoderKL.from_pretrained(model_config_name, 
                                             subfolder="vae")
         self.text_encoder = slip_models.CLIPTextPretrained()
+        self.weighting_module = weighting_module
         self.vae.requires_grad_(False)
         self.text_encoder.requires_grad_(False)
+        if self.weighting_module is not None:
+            self.weighting_module.requires_grad_(False)
 
         if pretrained_unet:
             self.unet = UNet2DConditionModel.from_pretrained(model_config_name,
@@ -87,14 +146,31 @@ class SDModel(nn.Module):
         super(SDModel, self).train(mode=mode)
         self.vae.eval()
         self.text_encoder.eval()
+        if self.weighting_module is not None:
+            self.weighting_module.eval()
+
+    def weighting(self, input_dict, normalization='default'):
+        # input will have 'img' 'txt' keys
+        if self.weighting_module is None:
+            return torch.ones(input_dict['img'].size(0),
+                            device=input_dict['img'].device)
+        weights = self.weighting_module(input_dict).detach()
+        if normalization == 'default': # keep same total magnitude w/ linear wieghting
+            weights = weights * (weights.size(0) / weights.sum())
+        else:
+            raise NotImplementedError
+
+        return weights
 
     def forward(self, img, txt, timesteps=None):
         # Maybe could check if above is initialized but avoiding if/else
-        
         # print(img)
         # print(txt)
         # print(img.device)
         with torch.no_grad():
+            # loss_weights = self.weighting_module(img, txt)
+            loss_weights = self.weighting({"img":img, "txt":txt})
+
             tokenized_txt = self.tokenizer(
                                           txt, # ['asdf']*4,
                                           padding="max_length",
@@ -132,7 +208,15 @@ class SDModel(nn.Module):
                           timesteps, 
                          encoder_hidden_states=encoder_hidden_states).sample
 
-        loss = F.mse_loss(noise, noise_pred, reduction='mean')
+        # print(loss_weights.shape, noise.shape, noise_pred.shape)
+        per_element_mses = (noise - noise_pred) ** 2
+        loss = (loss_weights.view(-1, 1, 1, 1) * per_element_mses).mean() # equivalent to below but admits weighting
+        
+        with torch.no_grad():
+            unweighted_loss = per_element_mses.mean()
+            print(f"Unweighted Loss: {unweighted_loss.item()} / Weighted Loss: {loss.item()}")
+
+        # loss = F.mse_loss(noise, noise_pred, reduction='mean') 
         return loss
 
     

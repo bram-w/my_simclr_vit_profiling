@@ -42,7 +42,7 @@ from smart_open import open as smart_open
 import transformers
 # import clip
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
-from sd_model import SDModel
+from sd_model import create_sd_model
 
 # from transformers import CLIPTextModel, CLIPTokenizer
 
@@ -191,8 +191,11 @@ def train():
     train_dataset, train_loader, train_sampler = load_training_data()
     local_batch_size = batch_size // get_world_size()
     
-    model = SDModel(cond_dropout=cfg.cond_dropout,
-                   pretrained_unet=cfg.pretrained_unet)
+    model = create_sd_model(cond_dropout=cfg.cond_dropout,
+                   pretrained_unet=cfg.pretrained_unet,
+                   weighting_model_name=cfg.weighting_model_name)
+   #  model = SDModel(cond_dropout=cfg.cond_dropout,
+   #                 pretrained_unet=cfg.pretrained_unet)
         
     # test  = transformers.CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
     """
@@ -422,6 +425,7 @@ def train():
 
             if (step+1 ) % cfg.log_step_interval == 0 or step==0:
                 lr = optimizer.param_groups[0]["lr"]
+                # TODO: .detach().cpu(?).numpy()
                 reduced_loss = reduce_tensor(loss, average=True).item()
                 master_print(
                         f"epoch {epoch} step {(step + 1)}, lr: {lr:.7f}, "

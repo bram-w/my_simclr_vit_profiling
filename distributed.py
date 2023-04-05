@@ -371,7 +371,7 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
         hacked_xla_save(ckpt, ckpt_path, global_master=True)
     else:
         if is_master():
-            torch.save(ckpt, f)
+            torch.save(ckpt, ckpt_path)
 
     master_print(f"checkpoint saved to {ckpt_path}")
 
