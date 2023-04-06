@@ -13,7 +13,7 @@ cfg.device = "xla"  # "xla" or "cuda"
 cfg.log_step_interval = 50
 cfg.ckpt_epoch_interval = 5
 cfg.ckpt_dir = "/export/home/<ADD YOUR USERNAME>/"  
-cfg.ckpt_prefix = "clip_vit"
+cfg.ckpt_prefix = "sd"
 cfg.load_model_ckpt_only = False
 
 cfg.resume_training = True
@@ -33,6 +33,7 @@ cfg.pretrained_unet = False
 cfg.image_dim = 256
 cfg.weighting_model_name = ''
 cfg.num_chain_timesteps = 1 # if >1 will train multistep
+cfg.print_unweighted_loss = False
 
 # --------------------------------------------------------------------------- #
 # data options

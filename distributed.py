@@ -371,7 +371,18 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
         hacked_xla_save(ckpt, ckpt_path, global_master=True)
     else:
         if is_master():
-            torch.save(ckpt, ckpt_path)
+            if 'gs:/' in ckpt_path:
+                gcs_path = ckpt_path.replace('gs://', '')
+                bucket_name = gcs_path.split('/')[0]
+                storage_client = storage.Client()
+                bucket = storage_client.bucket(bucket_name)
+                blob = bucket.blob('/'.join(gcs_path.split('/')[1:]))
+                print("Opening blob")
+                with blob.open('wb', ignore_flush=True) as f:
+                    print("Actually saving")
+                    torch.save(ckpt, f)
+            else:
+                torch.save(ckpt, ckpt_path)
 
     master_print(f"checkpoint saved to {ckpt_path}")
 

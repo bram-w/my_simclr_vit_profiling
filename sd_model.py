@@ -156,20 +156,25 @@ class SDModel(nn.Module):
         if self.weighting_module is not None:
             self.weighting_module.eval()
 
-    def weighting(self, input_dict, normalization='default'):
+    def weighting(self, input_dict, normalization='0_to_1'):
         # input will have 'img' 'txt' keys
         if self.weighting_module is None:
             return torch.ones(input_dict['img'].size(0),
                             device=input_dict['img'].device)
         weights = self.weighting_module(input_dict).detach()
-        if normalization == 'default': # keep same total magnitude w/ linear wieghting
+        if normalization == 'sum': # keep same total magnitude w/ linear wieghting
+            weights = weights * (weights.size(0) / weights.sum())
+        if normalization == '0_to_1': # keep same total magnitude w/ linear wieghting
+            # minimum is 0
+            weights = weights - weights.min()
+            # Make so sum is still same
             weights = weights * (weights.size(0) / weights.sum())
         else:
             raise NotImplementedError
 
         return weights
 
-    def forward(self, img, txt, timesteps=None):
+    def forward(self, img, txt, timesteps=None, print_unweighted_loss=False):
         # Maybe could check if above is initialized but avoiding if/else
         # print(img)
         # print(txt)
@@ -214,14 +219,17 @@ class SDModel(nn.Module):
         per_element_mses = (noise - noise_pred) ** 2
         loss = (loss_weights.view(-1, 1, 1, 1) * per_element_mses).mean() # equivalent to below but admits weighting
         
-        if False: # with torch.no_grad():
-            unweighted_loss = per_element_mses.mean()
-            print(f"Unweighted Loss: {unweighted_loss.item()} / Weighted Loss: {loss.item()}")
+        if print_unweighted_loss and is_master():
+            assert not is_xla() # would slow down too much
+            with torch.no_grad():
+                unweighted_loss = per_element_mses.mean()
+                print(f"Unweighted Loss: {unweighted_loss.item():.3f} / Weighted Loss: {loss.item():.3f}")
         return loss
 
     
     def generate(self, prompt, batch_size=1,
-                h=512, w=512, T=50, gs=7.5):
+                h=512, w=512, T=50, gs=7.5, seed=0):
+        torch.manual_seed(seed)
         device = self.unet.device
         # modeling off of https://github.com/huggingface/diffusers/blob/main/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py#L604
         

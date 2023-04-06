@@ -259,7 +259,7 @@ def train():
         # unet = unet.to(device)
         model = model.to(device)
         model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[cfg.device_id], output_device=cfg.device_id, find_unused_parameters=True
+            model, device_ids=[cfg.device_id], output_device=cfg.device_id, find_unused_parameters=False
         )
         """
         text_encoder = torch.nn.parallel.DistributedDataParallel(
@@ -408,7 +408,7 @@ def train():
                                             dtype=torch.long)
                 print(timesteps)
                 """
-                loss = model(img, txt) # , timesteps=timesteps)
+                loss = model(img, txt, print_unweighted_loss=cfg.print_unweighted_loss)
             # backward pass
             if scaler is not None:
                 scaler.scale(loss).backward()
@@ -444,8 +444,8 @@ def train():
 
                 info_dict = {"loss":reduced_loss, "epoch_time":time_elapsed, "epoch":epoch}
                 logs.append(info_dict)
-                with open(log_file, 'w') as out_file:
-                    json.dump(logs, out_file)
+                # with open(log_file, 'w') as out_file:
+                #     json.dump(logs, out_file)
 
                 if epoch % cfg.ckpt_epoch_interval == 0 or epoch == num_epochs:
                     ckpt_path = os.path.join(
