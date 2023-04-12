@@ -16,7 +16,8 @@ from distributed import (
     reduce_tensor,
     save_ckpt,
     load_ckpt,
-    load_text_model_ckpt
+    load_text_model_ckpt,
+    gather_tensor_with_backward
 )
 import slip_models
 ####
@@ -162,16 +163,21 @@ class SDModel(nn.Module):
             return torch.ones(input_dict['img'].size(0),
                             device=input_dict['img'].device)
         weights = self.weighting_module(input_dict).detach()
+        all_weights = gather_tensor_with_backward(weights)
         if normalization == 'sum': # keep same total magnitude w/ linear wieghting
-            weights = weights * (weights.size(0) / weights.sum())
-        if normalization == '0_to_1': # keep same total magnitude w/ linear wieghting
+            weights = weights * (all_weights.size(0) / all_weights.sum())
+        elif normalization == '0_to_1': # keep same total magnitude w/ linear wieghting
             # minimum is 0
-            weights = weights - weights.min()
+            min_weight = all_weights.min()
+            global_bs = all_weights.size(0)
+            weights = weights - min_weight
             # Make so sum is still same
-            weights = weights * (weights.size(0) / weights.sum())
+            weights_that_sum_to_1_globally = weights  / (all_weights.sum() - global_bs*min_weight)
+            # can test # print(gather_tensor_with_backward(weights_that_sum_to_1_globally).sum())
+            # get global to be the same
+            weights = weights_that_sum_to_1_globally * global_bs
         else:
             raise NotImplementedError
-
         return weights
 
     def forward(self, img, txt, timesteps=None, print_unweighted_loss=False):
@@ -224,6 +230,7 @@ class SDModel(nn.Module):
             with torch.no_grad():
                 unweighted_loss = per_element_mses.mean()
                 print(f"Unweighted Loss: {unweighted_loss.item():.3f} / Weighted Loss: {loss.item():.3f}")
+                # print(f"Unweighted Loss: {reduce_tensor(unweighted_loss, average=True):.3f} / Weighted Loss: {reduce_tensor(loss, average=True):.3f}")
         return loss
 
     
