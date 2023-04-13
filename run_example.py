@@ -130,7 +130,7 @@ def load_training_data():
         raise NotImplementedError
     # print(list(train_shards))
 
-    cap_transform = laion_cap_transform if 'laion' in cfg.data_dir else cc12m_cap_transform
+    cap_transform = identity # laion_cap_transform if 'laion' in cfg.data_dir else cc12m_cap_transform
 
     train_dataset = DataPipeline(
          wds.ResampledShards(train_shards),
@@ -154,6 +154,8 @@ def load_training_data():
     master_print("data loading done!")
 
     return train_dataset, train_loader, train_sampler
+
+
 
 def laion_cap_transform(x):
     return x[0]

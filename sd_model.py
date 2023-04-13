@@ -163,6 +163,7 @@ class SDModel(nn.Module):
             return torch.ones(input_dict['img'].size(0),
                             device=input_dict['img'].device)
         weights = self.weighting_module(input_dict).detach()
+        print(weights)
         all_weights = gather_tensor_with_backward(weights)
         if normalization == 'sum': # keep same total magnitude w/ linear wieghting
             weights = weights * (all_weights.size(0) / all_weights.sum())
@@ -188,7 +189,7 @@ class SDModel(nn.Module):
         with torch.no_grad():
             # loss_weights = self.weighting_module(img, txt)
             loss_weights = self.weighting({"img":img, "txt":txt})
-
+            print(txt)
             tokenized_txt = self.tokenizer(
                                           txt, # ['asdf']*4,
                                           padding="max_length",
