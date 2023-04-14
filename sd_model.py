@@ -189,7 +189,6 @@ class SDModel(nn.Module):
         with torch.no_grad():
             # loss_weights = self.weighting_module(img, txt)
             loss_weights = self.weighting({"img":img, "txt":txt})
-            print(txt)
             tokenized_txt = self.tokenizer(
                                           txt, # ['asdf']*4,
                                           padding="max_length",

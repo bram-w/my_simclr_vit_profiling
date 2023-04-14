@@ -42,6 +42,7 @@ cfg.fake_data = False
 cfg.data_dir = "gs://sfr-tpu-us-east1-research/bwallace/cc12m_shards"
 cfg.drop_last = True
 cfg.num_workers = 4
+cfg.initial_data_buffer = 10000
 cfg.iters_per_epoch = 0 # will default to train ds len
 
 # --------------------------------------------------------------------------- #

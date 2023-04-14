@@ -341,18 +341,20 @@ def hacked_xla_save(data, file_or_path, master_only=True, global_master=False):
       local=not global_master)
   print("Pushing to cpu")
   cpu_data = xm._maybe_convert_to_cpu(data, convert=should_write_data)
-  print("starting 'master' block")
-  if should_write_data:
+  if True: # should_write_data: # Trying others saving to dummy
     if 'gs://' in file_or_path:
+        print("Making blob")
         gcs_path = file_or_path.replace('gs://', '')
         bucket_name = gcs_path.split('/')[0]
         storage_client = storage.Client()
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob('/'.join(gcs_path.split('/')[1:]))
         print("Opening blob")
-        with blob.open('wb', ignore_flush=True) as f:
-            print("Actually saving")
-            torch.save(cpu_data, f)
+        print("starting 'master' block")
+        if should_write_data:
+            with blob.open('wb', ignore_flush=True) as f:
+                print("Actually saving")
+                torch.save(cpu_data, f)
   print("Rendezou")
   xm.rendezvous('torch_xla.core.xla_model.save')
 

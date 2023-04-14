@@ -7,4 +7,4 @@ sudo mkdir -p $SAVE_DIR && sudo chmod -R 777 $SAVE_DIR
 python3 -m torch_xla.distributed.xla_dist --tpu=$TPU_NAME \
 --restart-tpuvm-pod-server --env XLA_USE_BF16=0 \
 -- python3 /export/home/diffusion/my_simclr_vit_profiling/run_example.py \
-ckpt_dir=$SAVE_DIR batch_size=32 fake_data=True log_step_interval=50
+ckpt_dir=$SAVE_DIR batch_size=128 fake_data=False log_step_interval=1 pretrained_unet=False

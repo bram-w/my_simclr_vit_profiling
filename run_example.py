@@ -1,6 +1,11 @@
-"""
-Saves to ckpts via master but can't read
-"""
+try:
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.xla_multiprocessing as xmp
+    import torch_xla.distributed.parallel_loader as pl
+    import torch_xla.utils.utils as xu
+except ImportError:
+    xm = xmp = pl = xu = None
+
 import os
 import pprint
 import time
@@ -77,13 +82,6 @@ class SampleGenerator(object):
 
 # train_dataset_len = 12811 # 67  # Exactly the size of Imagenet dataset.
 train_dataset_len = 10055143  # Exactly the size of our vesion of CC12M
-try:
-    import torch_xla.core.xla_model as xm
-    import torch_xla.distributed.xla_multiprocessing as xmp
-    import torch_xla.distributed.parallel_loader as pl
-    import torch_xla.utils.utils as xu
-except ImportError:
-    xm = xmp = pl = xu = None
 
 def identity(x):
     return x
@@ -136,7 +134,7 @@ def load_training_data():
          wds.ResampledShards(train_shards),
         # we now have an iterator over all shards
         wds.tarfile_to_samples(handler=wds.warn_and_continue),
-        wds.shuffle(10000, initial=10000, handler=wds.warn_and_continue),
+        wds.shuffle(10000, initial=cfg.initial_data_buffer, handler=wds.warn_and_continue),
         wds.decode("pil", handler=wds.warn_and_continue),
         # we now have a list of decompressed train samples from each shard in this worker, in sequence
         wds.to_tuple("ppm;jpg;jpeg;png", "txt;json", handler=wds.warn_and_continue),
@@ -428,13 +426,16 @@ def train():
                 optimizer.step()
             lr_scheduler.step()
 
-            if (step+1 ) % cfg.log_step_interval == 0 or step==0:
+            if (step+1 ) % cfg.log_step_interval == 0:
                 lr = optimizer.param_groups[0]["lr"]
                 # TODO: .detach().cpu(?).numpy()
-                reduced_loss = reduce_tensor(loss, average=True).item()
+                if False: # is_xla():
+                    reduced_loss = 0
+                else:
+                    reduced_loss = reduce_tensor(loss, average=True).item()
                 master_print(
                         f"epoch {epoch} step {(step + 1)}, lr: {lr:.7f}, "
-                        f"loss: {reduced_loss:.7f}, "
+                        f"loss: {reduced_loss:.3f}, "
                         f"elapsed time: {time.time() - time_b} sec"
                 )
 
