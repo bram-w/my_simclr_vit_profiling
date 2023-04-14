@@ -20,7 +20,9 @@ print(args.prompts)
 # ckpt_path = args.ckpt_path #. sys.argv[1]
 
 use_default_pretrained = (args.ckpt_path == "vanilla_pretrained")
-a = SDModel(pretrained_unet=use_default_pretrained)
+
+use_lora = ('lora' in args.ckpt_path)
+a = SDModel(pretrained_unet=use_default_pretrained, lora=use_lora)
 
 if not use_default_pretrained:
     ckpt = torch.load(args.ckpt_path)
@@ -28,6 +30,8 @@ if not use_default_pretrained:
     state_dict = {k.replace('module.', ''):v for k,v in state_dict.items()}
     missing_keys, unexpected_keys = a.load_state_dict(state_dict, strict=False)
     assert len(missing_keys)==0
+    # if use_lora:
+    #     a.unet.load_attn_procs(a.lora_layers)
 a.cuda()
 a.eval()
 

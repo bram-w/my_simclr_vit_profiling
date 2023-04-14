@@ -60,7 +60,10 @@ class AttnProcsLayers(torch.nn.Module):
         def map_from(module, state_dict, *args, **kwargs):
             all_keys = list(state_dict.keys())
             for key in all_keys:
+                if 'processor' not in key: continue
                 replace_key = key.split(".processor")[0] + ".processor"
+                # mine has extra "unet" prepended from what this wants
+                replace_key = replace_key.replace("unet.", "")
                 new_key = key.replace(replace_key, f"layers.{module.rev_mapping[replace_key]}")
                 state_dict[new_key] = state_dict[key]
                 del state_dict[key]
@@ -159,31 +162,30 @@ class SDModel(nn.Module):
         if pretrained_unet:
             self.unet = UNet2DConditionModel.from_pretrained(model_config_name,
                                                              subfolder='unet')
-            if lora:
-                assert pretrained_unet
-                self.unet.requires_grad_(False)
-                lora_attn_procs = {}
-                for name in self.unet.attn_processors.keys():
-                    cross_attention_dim = None if name.endswith("attn1.processor") else self.unet.config.cross_attention_dim
-                    if name.startswith("mid_block"):
-                        hidden_size = self.unet.config.block_out_channels[-1]
-                    elif name.startswith("up_blocks"):
-                        block_id = int(name[len("up_blocks.")])
-                        hidden_size = list(reversed(self.unet.config.block_out_channels))[block_id]
-                    elif name.startswith("down_blocks"):
-                        block_id = int(name[len("down_blocks.")])
-                        hidden_size = self.unet.config.block_out_channels[block_id]
-
-                    lora_attn_procs[name] = LoRACrossAttnProcessor(
-                        hidden_size=hidden_size, cross_attention_dim=cross_attention_dim
-                    )   
-
-                self.unet.set_attn_processor(lora_attn_procs)
-                self.lora_layers = AttnProcsLayers(self.unet.attn_processors)
         else:
             unet_cfg = UNet2DConditionModel.load_config(model_config_name,
                                                         subfolder="unet") 
             self.unet = UNet2DConditionModel.from_config(unet_cfg)
+        if lora:
+            self.unet.requires_grad_(False)
+            lora_attn_procs = {}
+            for name in self.unet.attn_processors.keys():
+                cross_attention_dim = None if name.endswith("attn1.processor") else self.unet.config.cross_attention_dim
+                if name.startswith("mid_block"):
+                    hidden_size = self.unet.config.block_out_channels[-1]
+                elif name.startswith("up_blocks"):
+                    block_id = int(name[len("up_blocks.")])
+                    hidden_size = list(reversed(self.unet.config.block_out_channels))[block_id]
+                elif name.startswith("down_blocks"):
+                    block_id = int(name[len("down_blocks.")])
+                    hidden_size = self.unet.config.block_out_channels[block_id]
+
+                lora_attn_procs[name] = LoRACrossAttnProcessor(
+                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim
+                )   
+
+            self.unet.set_attn_processor(lora_attn_procs)
+            self.lora_layers = AttnProcsLayers(self.unet.attn_processors)
         # Switched to DDIM scheduler. The add_noise and num_train_timesteps are the same
         # so only difference is scheduler stepping (which we always DDIM for)
         self.scheduler = DDIMScheduler.from_pretrained(model_config_name,
