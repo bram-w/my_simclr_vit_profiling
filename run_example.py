@@ -196,6 +196,7 @@ def train():
                    num_chain_timesteps=cfg.num_chain_timesteps,
                    cond_dropout=cfg.cond_dropout,
                    pretrained_unet=cfg.pretrained_unet,
+                    lora=cfg.lora
                    )
    #  model = SDModel(cond_dropout=cfg.cond_dropout,
    #                 pretrained_unet=cfg.pretrained_unet)

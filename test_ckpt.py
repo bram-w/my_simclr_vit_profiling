@@ -9,9 +9,10 @@ parser.add_argument("ckpt_path", type=str)
 parser.add_argument("--num-seeds", type=int, default=5)
 parser.add_argument("--gs", type=float, default=7.5)
 parser.add_argument("--dim", type=int, default=256)
-parser.add_argument("--prompt", type=str, default="A photo of a dog")
+parser.add_argument("--prompts", type=str, default=["A photo of a dog"],
+        nargs='+')
 args = parser.parse_args()
-
+print(args.prompts)
 # should do argparsing if working with this script more
 # num_seeds = int(sys.argv[2]) if len(sys.argv)>2 else 1
 # prompt = sys.argv[3] if len(sys.argv)>3 else 'smoke test'
@@ -30,10 +31,10 @@ if not use_default_pretrained:
 a.cuda()
 a.eval()
 
-save_dir = f'outputs/{args.dim}x{args.dim}/{args.prompt.replace(" ","-")}/{args.ckpt_path.replace(".ckpt", "").replace("sd_ckpts/", "")}/'
-os.makedirs(save_dir, exist_ok=True)
-
-for s in range(args.num_seeds):
-    im = a.generate(args.prompt, seed=s, w=args.dim, h=args.dim,
-            gs=args.gs)[0]
-    im.save(f'{save_dir}/test_ckpt_run_{s}_gs{args.gs}.jpg')
+for prompt in args.prompts:
+    save_dir = f'outputs/{args.dim}x{args.dim}/{prompt.replace(" ","-")}/{args.ckpt_path.replace(".ckpt", "").replace("sd_ckpts/", "")}/'
+    os.makedirs(save_dir, exist_ok=True)
+    for s in range(args.num_seeds):
+        im = a.generate(prompt, seed=s, w=args.dim, h=args.dim,
+                gs=args.gs)[0]
+        im.save(f'{save_dir}/test_ckpt_run_{s}_gs{args.gs}.jpg')

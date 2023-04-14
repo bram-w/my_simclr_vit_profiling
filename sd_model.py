@@ -25,8 +25,49 @@ import transformers
 from tqdm import tqdm
 # import clip
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, DDIMScheduler
-
+from diffusers.models.cross_attention import LoRACrossAttnProcessor
 from aesthetic_model import AestheticScorer
+
+# from diffusers.loaders import AttnProcsLayers
+
+class AttnProcsLayers(torch.nn.Module):
+    def __init__(self, state_dict):
+        super().__init__()
+        self.layers = torch.nn.ModuleList(state_dict.values())
+        self.mapping = dict(enumerate(state_dict.keys()))
+        self.rev_mapping = {v: k for k, v in enumerate(state_dict.keys())}
+
+        # we add a hook to state_dict() and load_state_dict() so that the
+        # naming fits with `unet.attn_processors`
+        def map_to(module, state_dict, *args, **kwargs):
+            new_state_dict = {}
+            
+            # print(state_dict)
+            # print(module.mapping)
+            for key, value in state_dict.items():
+                # print(key)
+                if 'lora_layers' in key: # new
+                    num = int(key.split(".")[3 if 'module' in key else 2])  # start is now "lora_layers.layers"
+                    # num = int(key.split(".")[1])  # 0 is always "layers"
+                    new_key = key.replace(f"lora_layers.layers.{num}", "unet." + module.mapping[num])
+                    # new_key = key.replace(f"layers.{num}", module.mapping[num])
+                else:
+                    new_key = key
+                new_state_dict[new_key] = value
+
+            return new_state_dict
+
+        def map_from(module, state_dict, *args, **kwargs):
+            all_keys = list(state_dict.keys())
+            for key in all_keys:
+                replace_key = key.split(".processor")[0] + ".processor"
+                new_key = key.replace(replace_key, f"layers.{module.rev_mapping[replace_key]}")
+                state_dict[new_key] = state_dict[key]
+                del state_dict[key]
+
+        self._register_state_dict_hook(map_to)
+        self._register_load_state_dict_pre_hook(map_from, with_module=True)
+
 
 class CLIPWeighting(nn.Module):
     """
@@ -98,10 +139,12 @@ class SDModel(nn.Module):
                 model_config_name="CompVis/stable-diffusion-v1-4",
                 latent_scale = 0.18215,
                 pretrained_unet=False,
+                 lora=False,
                  cond_dropout=0.1,
                  weighting_module=None, # For reward training
                 ):
         super().__init__()
+        
         # print("TODO: Freeze VAE + Text encoder")
         # print("TODO: Does Unet need better init?") # seems to converge OK
         self.vae = AutoencoderKL.from_pretrained(model_config_name, 
@@ -116,6 +159,27 @@ class SDModel(nn.Module):
         if pretrained_unet:
             self.unet = UNet2DConditionModel.from_pretrained(model_config_name,
                                                              subfolder='unet')
+            if lora:
+                assert pretrained_unet
+                self.unet.requires_grad_(False)
+                lora_attn_procs = {}
+                for name in self.unet.attn_processors.keys():
+                    cross_attention_dim = None if name.endswith("attn1.processor") else self.unet.config.cross_attention_dim
+                    if name.startswith("mid_block"):
+                        hidden_size = self.unet.config.block_out_channels[-1]
+                    elif name.startswith("up_blocks"):
+                        block_id = int(name[len("up_blocks.")])
+                        hidden_size = list(reversed(self.unet.config.block_out_channels))[block_id]
+                    elif name.startswith("down_blocks"):
+                        block_id = int(name[len("down_blocks.")])
+                        hidden_size = self.unet.config.block_out_channels[block_id]
+
+                    lora_attn_procs[name] = LoRACrossAttnProcessor(
+                        hidden_size=hidden_size, cross_attention_dim=cross_attention_dim
+                    )   
+
+                self.unet.set_attn_processor(lora_attn_procs)
+                self.lora_layers = AttnProcsLayers(self.unet.attn_processors)
         else:
             unet_cfg = UNet2DConditionModel.load_config(model_config_name,
                                                         subfolder="unet") 
@@ -163,7 +227,6 @@ class SDModel(nn.Module):
             return torch.ones(input_dict['img'].size(0),
                             device=input_dict['img'].device)
         weights = self.weighting_module(input_dict).detach()
-        print(weights)
         all_weights = gather_tensor_with_backward(weights)
         if normalization == 'sum': # keep same total magnitude w/ linear wieghting
             weights = weights * (all_weights.size(0) / all_weights.sum())
