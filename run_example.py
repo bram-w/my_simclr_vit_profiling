@@ -11,6 +11,7 @@ import pprint
 import time
 import json
 from glob import glob
+from random import choice
 
 import torch
 import torchvision
@@ -83,8 +84,8 @@ class SampleGenerator(object):
 # train_dataset_len = 12811 # 67  # Exactly the size of Imagenet dataset.
 train_dataset_len = 10055143  # Exactly the size of our vesion of CC12M
 
-def identity(x):
-    return x
+def cap_transform(x):
+    return x if isinstance(x, str) else choice(x[1:])
 
 def load_training_data():
     world_size = get_world_size()
@@ -127,8 +128,6 @@ def load_training_data():
     else:
         raise NotImplementedError
     # print(list(train_shards))
-
-    cap_transform = identity # laion_cap_transform if 'laion' in cfg.data_dir else cc12m_cap_transform
 
     train_dataset = DataPipeline(
          wds.ResampledShards(train_shards),
