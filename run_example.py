@@ -188,7 +188,7 @@ def train():
     num_epochs = cfg.num_epochs
     assert batch_size % get_world_size() == 0
     train_dataset, train_loader, train_sampler = load_training_data()
-    local_batch_size = batch_size // get_world_size()
+    local_batch_size = batch_size // (get_world_size() * cfg.accumulate_grad_iter)
     
     model = create_sd_model(
                    weighting_model_name=cfg.weighting_model_name,
@@ -372,59 +372,35 @@ def train():
 
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
+        optimizer.zero_grad()
         for step, (img, txt) in enumerate(train_loader):
             # forward pass
-            optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=scaler is not None):
-                """
-                Separate DDPs is rough but just stitching pipeline together for now
-                """
-                
-                """
-                PUTTING ALL OF THIS INTO SDMODEL
-                encoder_hidden_states = text_encoder(txt)
-                # Not sure if scaling is right
-                latents = vae.module.encode(img.to(vae.device)).latent_dist.sample() * 0.18215 if hasattr(vae, 'module') else vae.encode(img).latent_dist.sample() * 0.18215
-                
-                noise = torch.randn_like(latents)
-                timesteps = torch.randint(0, scheduler.num_train_timesteps,
-                                          (noise.size(0),),
-                                          device=latents.device)
-                timesteps = timesteps.long()
-                noisy_latents = scheduler.add_noise(latents, noise, timesteps)
-                                
-                
-                noise_pred = unet(noisy_latents,
-                                  timesteps, 
-                                 encoder_hidden_states=encoder_hidden_states).sample
-                
-                loss = (noise.to(noise_pred.device) - noise_pred).pow(2).mean()
-                """
-                # Doing outside b/c not getting seeding to work inside
-                """
-                timesteps = torch.randint(0, cfg.num_noise_steps,
-                                            (local_batch_size,),
-                                            device=img.device,
-                                            dtype=torch.long)
-                print(timesteps)
-                """
                 loss = model(img, txt, print_unweighted_loss=cfg.print_unweighted_loss)
+                loss = loss / cfg.accumulate_grad_iter
             # backward pass
             if scaler is not None:
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
-            if is_xla():
-                # PyTorch XLA requires manually reducing gradients
-                xm.reduce_gradients(optimizer)
 
-            # param update
-            if scaler is not None:
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                optimizer.step()
-            lr_scheduler.step()
+
+            if ((step+1) % cfg.accumulate_grad_iter == 0):
+                if is_xla():
+                    # PyTorch XLA requires manually reducing gradients
+                    xm.reduce_gradients(optimizer)
+
+                # param update
+                if scaler is not None:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+                optimizer.zero_grad()
+                lr_scheduler.step()
+            else: # Let's pretend this never happend besides the gradients
+                continue
+            step = step // cfg.accumulate_grad_iter
 
             if (step+1 ) % cfg.log_step_interval == 0:
                 lr = optimizer.param_groups[0]["lr"]
