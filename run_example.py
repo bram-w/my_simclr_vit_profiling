@@ -89,7 +89,8 @@ def cap_transform(x):
 
 def load_training_data():
     world_size = get_world_size()
-    local_batch_size = cfg.batch_size // world_size
+    # local_batch_size = cfg.batch_size // world_size
+    local_batch_size = cfg.batch_size // (world_size * cfg.accumulate_grad_iter)
     if cfg.fake_data:
         if xu is not None:
             train_loader = xu.SampleGenerator(
@@ -375,6 +376,7 @@ def train():
         optimizer.zero_grad()
         for step, (img, txt) in enumerate(train_loader):
             # forward pass
+            print(step, len(img))
             with torch.cuda.amp.autocast(enabled=scaler is not None):
                 loss = model(img, txt, print_unweighted_loss=cfg.print_unweighted_loss)
                 loss = loss / cfg.accumulate_grad_iter
@@ -383,7 +385,6 @@ def train():
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
-
 
             if ((step+1) % cfg.accumulate_grad_iter == 0):
                 if is_xla():
