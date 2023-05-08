@@ -36,7 +36,7 @@ a.cuda()
 a.eval()
 
 for prompt in args.prompts:
-    save_dir = f'outputs/{args.dim}x{args.dim}/{prompt.replace(" ","-")}/{args.ckpt_path.replace(".ckpt", "").replace("sd_ckpts/", "")}/'
+    save_dir = f'outputs/{args.dim}x{args.dim}/{prompt.replace(" ","-")[:100]}/{args.ckpt_path.replace(".ckpt", "").replace("sd_ckpts/", "")}/'
     os.makedirs(save_dir, exist_ok=True)
     for s in range(args.num_seeds):
         im = a.generate(prompt, seed=s, w=args.dim, h=args.dim,
