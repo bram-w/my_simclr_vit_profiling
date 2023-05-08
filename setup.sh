@@ -10,6 +10,7 @@ pip install diffusers==0.14.0
 pip install git+https://github.com/openai/CLIP.git
 pip install torchmetrics
 pip install open_clip_torch
+pip install pycocotools
 # pip install google-cloud-storage
 # pip install -r requirements.txt
 

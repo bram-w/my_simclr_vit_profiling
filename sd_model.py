@@ -300,7 +300,8 @@ class SDModel(nn.Module):
 
     
     def generate(self, prompt, batch_size=1,
-                h=512, w=512, T=50, gs=7.5, seed=0):
+                h=512, w=512, T=50, gs=7.5, seed=0,
+                silent=False):
         torch.manual_seed(seed)
         device = self.unet.device
         # modeling off of https://github.com/huggingface/diffusers/blob/main/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py#L604
@@ -337,7 +338,7 @@ class SDModel(nn.Module):
         latents = latents * self.scheduler.init_noise_sigma # 1 for DDPM
         
         # Denoising
-        for i,t in tqdm(enumerate(timesteps)):
+        for i,t in tqdm(enumerate(timesteps), disable=silent):
             latent_model_input = torch.cat([latents] * 2) # clf-free guidance
             # No change below for DDPM scheduler
             latent_model_input = self.scheduler.scale_model_input(
