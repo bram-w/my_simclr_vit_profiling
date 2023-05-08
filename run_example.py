@@ -336,14 +336,16 @@ def train():
                 # if os.path.exists(try_path):
                 #     resume_ckpt_path = try_path
         else:
-            assert os.path.exists(cfg.resume_ckpt_file)
-            resume_ckpt_path = cfg.resume_ckpt_file
+            # assert os.path.exists(cfg.resume_ckpt_file)
+            resume_ckpt_path = cfg.resume_ckpt_path
             
     if resume_ckpt_path is not None:
         meta_data = load_ckpt(resume_ckpt_path, model, optimizer,
                               lr_scheduler, scaler,
                             load_model_ckpt_only=cfg.load_model_ckpt_only)
         last_ckpt_epoch = meta_data["epoch"]
+        if cfg.override_opt_lr:
+            optimizer.param_groups[0]['lr'] = cfg.lr
     else:
         last_ckpt_epoch = 0
 
@@ -376,7 +378,6 @@ def train():
         optimizer.zero_grad()
         for step, (img, txt) in enumerate(train_loader):
             # forward pass
-            print(step, len(img))
             with torch.cuda.amp.autocast(enabled=scaler is not None):
                 loss = model(img, txt, print_unweighted_loss=cfg.print_unweighted_loss)
                 loss = loss / cfg.accumulate_grad_iter
@@ -385,7 +386,8 @@ def train():
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
-
+            if is_xla():
+                xm.mark_step()
             if ((step+1) % cfg.accumulate_grad_iter == 0):
                 if is_xla():
                     # PyTorch XLA requires manually reducing gradients
@@ -409,7 +411,8 @@ def train():
                 if False: # is_xla():
                     reduced_loss = 0
                 else:
-                    reduced_loss = reduce_tensor(loss, average=True).item()
+                    # reduced_loss =   cfg.accumulate_grad_iter * reduce_tensor(loss, average=True).item()
+                    reduced_loss =  reduce_tensor(loss, average=True).item()
                 master_print(
                         f"epoch {epoch} step {(step + 1)}, lr: {lr:.7f}, "
                         f"loss: {reduced_loss:.3f}, "

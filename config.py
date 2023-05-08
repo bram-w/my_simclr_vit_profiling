@@ -68,6 +68,7 @@ cfg.accumulate_grad_iter = 1
 cfg.lr = 1e-4
 cfg.weight_decay = 1e-2
 cfg.warmup_steps = 1e4
+cfg.override_opt_lr = False
 
 cfg.num_epochs = 35
 cfg.warmup_epochs = 1
