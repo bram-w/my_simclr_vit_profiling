@@ -145,26 +145,35 @@ class SDModel(nn.Module):
                  lora=False,
                  cond_dropout=0.1,
                  weighting_module=None, # For reward training
+                 pixel_space=False
                 ):
         super().__init__()
         
+        self.pixel_space = pixel_space
         # print("TODO: Freeze VAE + Text encoder")
         # print("TODO: Does Unet need better init?") # seems to converge OK
-        self.vae = AutoencoderKL.from_pretrained(model_config_name, 
-                                            subfolder="vae")
         self.text_encoder = slip_models.CLIPTextPretrained()
         self.weighting_module = weighting_module
-        self.vae.requires_grad_(False)
         self.text_encoder.requires_grad_(False)
+        
+        if not pixel_space:
+            self.vae = AutoencoderKL.from_pretrained(model_config_name, 
+                                                subfolder="vae")
+            self.vae.requires_grad_(False)
+            
         if self.weighting_module is not None:
             self.weighting_module.requires_grad_(False)
 
         if pretrained_unet:
+            assert not pixel_space
             self.unet = UNet2DConditionModel.from_pretrained(model_config_name,
                                                              subfolder='unet')
         else:
             unet_cfg = UNet2DConditionModel.load_config(model_config_name,
-                                                        subfolder="unet") 
+                                                        subfolder="unet")
+            if pixel_space:
+                unet_cfg['in_channels'] = 3
+                unet_cfg['out_channels'] = 3
             self.unet = UNet2DConditionModel.from_config(unet_cfg)
         if lora:
             self.unet.requires_grad_(False)
@@ -218,7 +227,7 @@ class SDModel(nn.Module):
         
     def train(self, mode=True):
         super(SDModel, self).train(mode=mode)
-        self.vae.eval()
+        if not self.pixel_space: self.vae.eval()
         self.text_encoder.eval()
         if self.weighting_module is not None:
             self.weighting_module.eval()
@@ -273,7 +282,11 @@ class SDModel(nn.Module):
             encoder_hidden_states = torch.where(mask, 
                                                 encoder_hidden_states,
                                                 uncond_hidden_states)
-            latents = self.vae.encode(img).latent_dist.sample() * self.latent_scale
+            
+            if self.pixel_space:
+                latents = img
+            else:
+                latents = self.vae.encode(img).latent_dist.sample() * self.latent_scale
 
             noise = torch.randn_like(latents)
             if timesteps is None:
@@ -302,6 +315,8 @@ class SDModel(nn.Module):
     def generate(self, prompt, batch_size=1,
                 h=512, w=512, T=50, gs=7.5, seed=0,
                 silent=False):
+        if self.pixel_space:
+            raise NotImplementedError
         torch.manual_seed(seed)
         device = self.unet.device
         # modeling off of https://github.com/huggingface/diffusers/blob/main/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py#L604

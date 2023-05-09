@@ -18,6 +18,7 @@ import torchvision
 import torchvision.transforms as T
 
 # import clip_config as config
+from caption_cleaner import clean_caption
 import config
 from losses import CLIPLoss
 from distributed import (
@@ -84,8 +85,14 @@ class SampleGenerator(object):
 # train_dataset_len = 12811 # 67  # Exactly the size of Imagenet dataset.
 train_dataset_len = 10055143  # Exactly the size of our vesion of CC12M
 
+
 def cap_transform(x):
+    # print(x)
     return x if isinstance(x, str) else choice(x[1:])
+def cap_transform_clean(x):
+    # print(x)
+    cap = x if isinstance(x, str) else choice(x[1:])
+    return clean_caption(cap)
 
 def load_training_data():
     world_size = get_world_size()
@@ -111,11 +118,18 @@ def load_training_data():
     )
     
     # tokenizer = SimpleTokenizer()
+     
+    if cfg.pixel_space:
+        img_mean = [0.485, 0.456, 0.406]
+        img_std = [0.229, 0.224, 0.225]
+    else:
+        img_mean = [0.5, 0.5, 0.5]
+        img_std = [0.5, 0.5, 0.5]
     viz_transform =     T.Compose(
                     [
                         T.RandomResizedCrop(cfg.image_dim, scale=(0.5, 1.0)),
                         T.ToTensor(),
-                        T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+                        T.Normalize(mean=img_mean, std=img_std),
                     ]
                         )
     # num_dataset_instances = xm.xrt_world_size() * cfg.num_workers
@@ -128,7 +142,9 @@ def load_training_data():
         train_shards = glob(os.path.join(cfg.data_dir, "*", "*.tar"))
     else:
         raise NotImplementedError
-    # print(list(train_shards))
+    # print(len(list(train_shards)))
+    
+    chosen_cap_transform = cap_transform_clean if cfg.clean_caption else cap_transform
 
     train_dataset = DataPipeline(
          wds.ResampledShards(train_shards),
@@ -140,7 +156,7 @@ def load_training_data():
         wds.to_tuple("ppm;jpg;jpeg;png", "txt;json", handler=wds.warn_and_continue),
         # wds.map_tuple(viz_transform, tokenizer_call, handler=wds.warn_and_continue),
         # wds.map_tuple(viz_transform, lambda x: torch.randint(low=0, high=10000, size=(77,)), handler=wds.warn_and_continue),
-        wds.map_tuple(viz_transform, cap_transform, handler=wds.warn_and_continue),
+        wds.map_tuple(viz_transform, chosen_cap_transform, handler=wds.warn_and_continue),
         wds.batched(local_batch_size),
         )# .with_epoch(epoch_size).with_length(epoch_size) # adds `__len__` method to dataset
     train_loader = WebLoader(train_dataset, num_workers=cfg.num_workers,
@@ -196,7 +212,8 @@ def train():
                    num_chain_timesteps=cfg.num_chain_timesteps,
                    cond_dropout=cfg.cond_dropout,
                    pretrained_unet=cfg.pretrained_unet,
-                    lora=cfg.lora
+                    lora=cfg.lora,
+                   pixel_space=cfg.pixel_space
                    )
    #  model = SDModel(cond_dropout=cfg.cond_dropout,
    #                 pretrained_unet=cfg.pretrained_unet)

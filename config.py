@@ -35,6 +35,7 @@ cfg.image_dim = 256
 cfg.weighting_model_name = ''
 cfg.num_chain_timesteps = 1 # if >1 will train multistep
 cfg.print_unweighted_loss = False
+cfg.pixel_space = False
 
 # --------------------------------------------------------------------------- #
 # data options
@@ -45,6 +46,7 @@ cfg.drop_last = True
 cfg.num_workers = 4
 cfg.initial_data_buffer = 10000
 cfg.iters_per_epoch = 0 # will default to train ds len
+cfg.clean_caption = True
 
 # --------------------------------------------------------------------------- #
 # model options
