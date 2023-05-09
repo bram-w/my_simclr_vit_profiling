@@ -428,8 +428,8 @@ def train():
                 if False: # is_xla():
                     reduced_loss = 0
                 else:
-                    # reduced_loss =   cfg.accumulate_grad_iter * reduce_tensor(loss, average=True).item()
-                    reduced_loss =  reduce_tensor(loss, average=True).item()
+                    reduced_loss =   cfg.accumulate_grad_iter * reduce_tensor(loss, average=True).item()
+                    # reduced_loss =  reduce_tensor(loss, average=True).item()
                 master_print(
                         f"epoch {epoch} step {(step + 1)}, lr: {lr:.7f}, "
                         f"loss: {reduced_loss:.3f}, "
