@@ -403,8 +403,6 @@ def train():
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
-            if is_xla():
-                xm.mark_step()
             if ((step+1) % cfg.accumulate_grad_iter == 0):
                 if is_xla():
                     # PyTorch XLA requires manually reducing gradients
@@ -419,6 +417,8 @@ def train():
                 optimizer.zero_grad()
                 lr_scheduler.step()
             else: # Let's pretend this never happend besides the gradients
+                if is_xla():
+                    xm.mark_step()
                 continue
             step = step // cfg.accumulate_grad_iter
 
