@@ -9,6 +9,7 @@ parser.add_argument("ckpt_path", type=str)
 parser.add_argument("--num-seeds", type=int, default=5)
 parser.add_argument("--gs", type=float, default=7.5)
 parser.add_argument("--dim", type=int, default=256)
+parser.add_argument("--pixel-space", action='store_true')
 parser.add_argument("--prompts", type=str, default=["A photo of a dog"],
         nargs='+')
 args = parser.parse_args()
@@ -22,7 +23,8 @@ print(args.prompts)
 use_default_pretrained = (args.ckpt_path == "vanilla_pretrained")
 
 use_lora = ('lora' in args.ckpt_path)
-a = SDModel(pretrained_unet=use_default_pretrained, lora=use_lora)
+a = SDModel(pretrained_unet=use_default_pretrained, lora=use_lora,
+           pixel_space=args.pixel_space)
 
 if not use_default_pretrained:
     ckpt = torch.load(args.ckpt_path)
