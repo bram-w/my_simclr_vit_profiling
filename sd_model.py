@@ -315,8 +315,6 @@ class SDModel(nn.Module):
     def generate(self, prompt, batch_size=1,
                 h=512, w=512, T=50, gs=7.5, seed=0,
                 silent=False):
-        if self.pixel_space:
-            raise NotImplementedError
         torch.manual_seed(seed)
         device = self.unet.device
         # modeling off of https://github.com/huggingface/diffusers/blob/main/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py#L604
@@ -348,7 +346,16 @@ class SDModel(nn.Module):
         
         # Latents
         # Hardcoding scale factor for now
-        latents = torch.randn((batch_size, 4, h//8, w//8),
+        if self.pixel_space:
+            feed_h = h
+            feed_w = w
+            noise_channels = 3
+        else:
+            feed_h = h // 8
+            feed_w = w // 8
+            noise_channels = 4
+        
+        latents = torch.randn((batch_size, noise_channels, feed_h, feed_w),
                               device=device, dtype=self.unet.dtype)
         latents = latents * self.scheduler.init_noise_sigma # 1 for DDPM
         
@@ -372,9 +379,15 @@ class SDModel(nn.Module):
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
         
         # decode
-        latents = latents / self.latent_scale
-        image = self.vae.decode(latents).sample
-        image = (0.5 * image + 0.5).clamp(0, 1)
+        if self.pixel_space:
+            img_mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(latents.device)
+            img_std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(latents.device)
+            image = (img_std * latents) + img_mean
+            image = image.clamp(0, 1)
+        else:
+            latents = latents / self.latent_scale
+            image = self.vae.decode(latents).sample
+            image = (0.5 * image + 0.5).clamp(0, 1)
         image = image.detach().cpu().permute(0, 2, 3, 1).float().numpy()
         image = (image * 255).round().astype("uint8")
         image = [Image.fromarray(im) for im in image]
