@@ -92,7 +92,7 @@ def cap_transform(x):
 def cap_transform_clean(x):
     # print(x)
     cap = x if isinstance(x, str) else choice(x[1:])
-    return clean_caption(cap)
+    return clean_caption(clean_caption(cap))
 
 def load_training_data():
     world_size = get_world_size()
@@ -113,9 +113,9 @@ def load_training_data():
             from fake_data import fake_data
             return [None] * train_dataset_len, fake_data(train_dataset_len, local_batch_size, str_cond=True), None
     master_print(f"loading images from : {cfg.data_dir}")
-    tokenizer = transformers.CLIPTokenizer.from_pretrained(
-        cfg.model_name, subfolder="tokenizer", revision=None
-    )
+    # tokenizer = transformers.CLIPTokenizer.from_pretrained(
+    #     cfg.model_name, subfolder="tokenizer", revision=None
+    # )
     
     # tokenizer = SimpleTokenizer()
      
@@ -213,7 +213,8 @@ def train():
                    cond_dropout=cfg.cond_dropout,
                    pretrained_unet=cfg.pretrained_unet,
                     lora=cfg.lora,
-                   pixel_space=cfg.pixel_space
+                   pixel_space=cfg.pixel_space,
+                   use_t5=cfg.use_t5
                    )
    #  model = SDModel(cond_dropout=cfg.cond_dropout,
    #                 pretrained_unet=cfg.pretrained_unet)

@@ -22,6 +22,7 @@ from distributed import (
 import slip_models
 ####
 import transformers
+from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5Tokenizer
 from tqdm import tqdm
 # import clip
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, DDIMScheduler
@@ -142,17 +143,46 @@ class SDModel(nn.Module):
                 model_config_name="CompVis/stable-diffusion-v1-4",
                 latent_scale = 0.18215,
                 pretrained_unet=False,
-                 lora=False,
-                 cond_dropout=0.1,
-                 weighting_module=None, # For reward training
-                 pixel_space=False
+                lora=False,
+                cond_dropout=0.1,
+                weighting_module=None, # For reward training
+                pixel_space=False,
+                use_t5=False,
                 ):
         super().__init__()
         
         self.pixel_space = pixel_space
+        self.use_t5 = use_t5
         # print("TODO: Freeze VAE + Text encoder")
         # print("TODO: Does Unet need better init?") # seems to converge OK
-        self.text_encoder = slip_models.CLIPTextPretrained()
+        if self.use_t5:
+            # FIXME: Load from Google T5 branch instead of DF. They are equivalent, but former is cleaner.
+            self.tokenizer = T5Tokenizer.from_pretrained("DeepFloyd/IF-I-M-v1.0", subfolder="tokenizer")
+            self.tokenizer_kwargs = {'max_length': 77,
+                                     'padding': "max_length",
+                                     'truncation': True,
+                                     'return_attention_mask': True,
+                                     'add_special_tokens':True,
+                                     'return_tensors':"pt"
+                                     }
+            self.text_encoder = T5EncoderModel.from_pretrained("DeepFloyd/IF-I-M-v1.0", subfolder="text_encoder")
+        else:
+            self.tokenizer = CLIPTokenizer.from_pretrained(
+                model_config_name,
+                subfolder="tokenizer",
+                revision=None
+                )
+            self.tokenizer_kwargs = {'padding':"max_length",
+                                     'max_length':self.tokenizer.model_max_length,
+                                     'truncation':True,
+                                     'return_tensors':"pt"
+                                     }
+            self.text_encoder = CLIPTextModel.from_pretrained(
+                model_config_name,
+                subfolder="text_encoder",
+                revision=None
+            )
+        
         self.weighting_module = weighting_module
         self.text_encoder.requires_grad_(False)
         
@@ -201,30 +231,15 @@ class SDModel(nn.Module):
                                               subfolder='scheduler')
         self.latent_scale = latent_scale
 
-        # Not needed for training but for generation
-        self.tokenizer = transformers.CLIPTokenizer.from_pretrained(
-                model_config_name,
-            subfolder="tokenizer",
-            revision=None
-            )
         self.cond_dropout = cond_dropout
         
         # slow startup on cpu but not sure how to handle on DDP
-        self.initialize_uncond_hidden_states()
-        
-    def initialize_uncond_hidden_states(self):
-        
-        with torch.no_grad():
-            uncond_tokenized_inputs = self.tokenizer(
-                                          '',
-                                          padding="max_length",
-                                          max_length=self.tokenizer.model_max_length,
-                                          truncation=True,
-                                          return_tensors='pt'
-            ).input_ids
-
-            self.encoder_hidden_states_UC = self.text_encoder(uncond_tokenized_inputs).detach()
-        
+        self.encoder_hidden_states_UC = self.get_text_embeddings("")
+    
+    @property
+    def device(self):
+        return self.unet.device
+    
     def train(self, mode=True):
         super(SDModel, self).train(mode=mode)
         if not self.pixel_space: self.vae.eval()
@@ -254,7 +269,25 @@ class SDModel(nn.Module):
         else:
             raise NotImplementedError
         return weights
+    
+    @torch.no_grad()
+    def get_text_embeddings(self, text: str):
+        # TODO: Move tokenization to dataloading (?)
+        tokenized_inputs = self.tokenizer(
+                                        text,
+                                        **self.tokenizer_kwargs
+        ).to(self.device)
+        if self.use_t5:
+            attention_mask = tokenized_inputs.attention_mask
+        else:
+            attention_mask = None #No attention mask for CLIP Text encoder
 
+        text_encoder_embs = self.text_encoder(
+            input_ids=tokenized_inputs.input_ids,
+            attention_mask=attention_mask
+        )
+        return text_encoder_embs['last_hidden_state'].detach()
+    
     def forward(self, img, txt, timesteps=None, print_unweighted_loss=False):
         # Maybe could check if above is initialized but avoiding if/else
         # print(img)
@@ -263,13 +296,7 @@ class SDModel(nn.Module):
         with torch.no_grad():
             # loss_weights = self.weighting_module(img, txt)
             loss_weights = self.weighting({"img":img, "txt":txt})
-            tokenized_txt = self.tokenizer(
-                                          txt, # ['asdf']*4,
-                                          padding="max_length",
-                                          max_length=self.tokenizer.model_max_length,
-                                          truncation=True,
-                                          return_tensors='pt').input_ids.to(self.unet.device)
-            encoder_hidden_states = self.text_encoder(tokenized_txt)
+            encoder_hidden_states = self.get_text_embeddings(txt)
             # Do dropout to null conditioning
             lbs = encoder_hidden_states.size(0)
             mask = (torch.rand((lbs, 1, 1),
@@ -315,35 +342,17 @@ class SDModel(nn.Module):
     def generate(self, prompt, batch_size=1,
                 h=512, w=512, T=50, gs=7.5, seed=0,
                 silent=False):
-        if self.pixel_space:
-            raise NotImplementedError
+        if self.pixel_space or self.use_t5:
+            raise NotImplementedError()
+        
         torch.manual_seed(seed)
-        device = self.unet.device
         # modeling off of https://github.com/huggingface/diffusers/blob/main/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py#L604
-        
-        
-        # Could condense
-        cond_tokenized_inputs = self.tokenizer(
-                                      prompt,
-                                      padding="max_length",
-                                      max_length=self.tokenizer.model_max_length,
-                                      truncation=True,
-                                      return_tensors='pt').input_ids.to(device)
-        encoder_hidden_states_C = self.text_encoder(cond_tokenized_inputs)
-        
-        uncond_tokenized_inputs = self.tokenizer(
-                                      '',
-                                      padding="max_length",
-                                      max_length=self.tokenizer.model_max_length,
-                                      truncation=True,
-                                      return_tensors='pt').input_ids.to(device)
-        encoder_hidden_states_UC = self.text_encoder(uncond_tokenized_inputs)
-        
-        encoder_hidden_states = torch.cat([encoder_hidden_states_UC,
-                                           encoder_hidden_states_C])
+                
+        encoder_hidden_states = torch.cat([self.encoder_hidden_states_UC,
+                                           self.get_text_embeddings(prompt)])
         
         # Prepare timesteps
-        self.scheduler.set_timesteps(T, device=device)
+        self.scheduler.set_timesteps(T, device=self.device)
         timesteps = self.scheduler.timesteps
         
         # Latents
@@ -403,7 +412,7 @@ class FullChainSDModel(SDModel):
                                           padding="max_length",
                                           max_length=self.tokenizer.model_max_length,
                                           truncation=True,
-                                          return_tensors='pt').input_ids.to(self.unet.device)
+                                          return_tensors='pt').input_ids.to(self.device)
             encoder_hidden_states = self.text_encoder(tokenized_txt)
             # Do dropout to null conditioning
             lbs = encoder_hidden_states.size(0)
