@@ -8,7 +8,7 @@ from distributed import (
 )
 import numpy as np
 import math
-from transformers import T5EncoderModel, T5Tokenizer
+from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5Tokenizer
 from tqdm import tqdm
 from diffusers import UNet2DConditionModel
 from losses import normal_kl, discretized_gaussian_log_likelihood, mean_flat
@@ -65,6 +65,10 @@ class DFModel(nn.Module):
                 pretrained_unet: bool = False,
                 cond_dropout: float = 0.1,
                 rescale_timesteps: bool = False,
+                use_t5: bool = True,
+                lora=False, #for legacy (currently unsupported)
+                weighting_module=None, #for legacy (currently unsupported)
+                pixel_space = True, #for legacy (model is always in pixel space)
                 ):
         super().__init__()
         assert model_config_name.startswith("DeepFloyd/IF-I"), f"Got config {model_config_name}. Code currently only supports Stage I training."
@@ -81,23 +85,44 @@ class DFModel(nn.Module):
         
         ## Get Models ##
         # Text encoder & Tokenizer
-        self.tokenizer = T5Tokenizer.from_pretrained(model_config_name, subfolder="tokenizer")
-        self.tokenizer_kwargs = {'max_length': 77,
-                                    'padding': "max_length",
-                                    'truncation': True,
-                                    'return_attention_mask': True,
-                                    'add_special_tokens':True,
-                                    'return_tensors':"pt"
-                                    }
-        self.text_encoder = T5EncoderModel.from_pretrained(model_config_name, subfolder="text_encoder")
+        self.use_clip = not use_t5
+        if self.use_clip:
+            self.tokenizer = CLIPTokenizer.from_pretrained(
+                "openai/clip-vit-large-patch14",
+                )
+            self.tokenizer_kwargs = {'padding':"max_length",
+                                     'max_length':self.tokenizer.model_max_length,
+                                     'truncation':True,
+                                     'return_tensors':"pt"
+                                     }
+            self.text_encoder = CLIPTextModel.from_pretrained(
+                "openai/clip-vit-large-patch14",
+            )
+        else:
+            self.tokenizer = T5Tokenizer.from_pretrained(model_config_name, subfolder="tokenizer")
+            self.tokenizer_kwargs = {'max_length': 77,
+                                        'padding': "max_length",
+                                        'truncation': True,
+                                        'return_attention_mask': True,
+                                        'add_special_tokens':True,
+                                        'return_tensors':"pt"
+                                        }
+            self.text_encoder = T5EncoderModel.from_pretrained(model_config_name, subfolder="text_encoder")
+        # Freeze text encoder
+        self.text_encoder.requires_grad_(False)
 
         # UNet
         if pretrained_unet:
+            assert not self.use_clip, "CLIP Text Encoder can NOT be used with pretrained DF UNet(s)."
             self.unet = UNet2DConditionModel.from_pretrained(model_config_name,
                                                              subfolder='unet')
         else:
             unet_cfg = UNet2DConditionModel.load_config(model_config_name,
                                                         subfolder="unet")
+            if self.use_clip:
+                unet_cfg['cross_attention_dim'] = self.text_encoder.config.hidden_size
+                unet_cfg['encoder_hid_dim'] = None
+                
             self.unet = UNet2DConditionModel.from_config(unet_cfg)
 
         self.cond_dropout = cond_dropout
@@ -112,10 +137,7 @@ class DFModel(nn.Module):
 
     def train(self, mode=True):
         super(DFModel, self).train(mode=mode)
-        if not self.pixel_space: self.vae.eval()
         self.text_encoder.eval()
-        if self.weighting_module is not None:
-            self.weighting_module.eval()
 
     def setup_diffusion_constants(self):
         alphas = 1.0 - self.betas
@@ -303,9 +325,15 @@ class DFModel(nn.Module):
                                         text,
                                         **self.tokenizer_kwargs
         ).to(self.device)
+        
+        if self.use_clip:
+            attention_mask = None
+        else:
+            attention_mask = tokenized_inputs.attention_mask
+        
         text_encoder_embs = self.text_encoder(
             input_ids=tokenized_inputs.input_ids,
-            attention_mask=tokenized_inputs.attention_mask
+            attention_mask=attention_mask
         )
         return text_encoder_embs['last_hidden_state'].detach()
         
@@ -361,13 +389,14 @@ class DFModel(nn.Module):
                                             encoder_hidden_states,
                                             uncond_hidden_states)
 
+        if noise is None:
+            noise = torch.randn_like(img)
+
         if timesteps is None:
-            timesteps = torch.randint(0, self.scheduler.num_train_timesteps,
+            timesteps = torch.randint(0, self.num_timesteps,
                                         (noise.size(0),),
                                         device=img.device)
             timesteps = timesteps.long()
-        if noise is None:
-            noise = torch.randn_like(img)
             
         noisy_img_t = self.q_sample(img, timesteps, noise)
         noise_pred = self.unet(noisy_img_t,
@@ -375,13 +404,11 @@ class DFModel(nn.Module):
                                encoder_hidden_states=encoder_hidden_states).sample
         
         ## Compute Loss ##
-        # Loss for noise prediction
-        loss = mean_flat((noise - noise_pred) ** 2)
-        
-        # Loss for variance prediction.
         B, C = img.shape[:2]
         assert noise_pred.shape == (B, C * 2, *img.shape[2:])
         noise_pred, model_var_values = torch.split(noise_pred, C, dim=1)
+        # Loss for noise prediction
+        loss = mean_flat((noise - noise_pred) ** 2)
         # Learn the variance using the variational bound, but don't let
         # it affect our mean prediction.
         frozen_out = torch.cat([noise_pred.detach(), model_var_values], dim=1)
@@ -402,12 +429,15 @@ class DFModel(nn.Module):
             with torch.no_grad():
                 avg_loss = loss.mean()
                 print(f"Loss: {avg_loss.item():.3f}")
-        return loss
+        return loss.mean()
     
     def generate(self, prompt, batch_size=1,
                 h=512, w=512, T=50, gs=7.5, seed=0,
                 silent=False):
         raise NotImplementedError()
+
+def create_df_model(**kwargs):
+    return DFModel(**kwargs)
 
 
 def _extract_into_tensor(arr, timesteps, broadcast_shape):

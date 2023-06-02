@@ -8,14 +8,19 @@ except ImportError:
 
 import os
 import pprint
+import math
 import time
+from time import perf_counter
 import json
 from glob import glob
 from random import choice
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import torch
 import torchvision
 import torchvision.transforms as T
+from torch.utils.tensorboard import SummaryWriter
 
 # import clip_config as config
 from caption_cleaner import clean_caption
@@ -41,7 +46,6 @@ from transforms import ImgPilColorDistortion, ImgPilGaussianBlur, MultiViewGener
 from utils import SmoothedValue
 import my_webdataset as wds
 from my_webdataset import DataPipeline, WebLoader
-import slip_models
 from tokenizer import SimpleTokenizer
 from smart_open import open as smart_open
 
@@ -50,6 +54,7 @@ import transformers
 # import clip
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler
 from sd_model import create_sd_model
+from df_model import create_df_model
 
 # from transformers import CLIPTextModel, CLIPTokenizer
 
@@ -125,13 +130,27 @@ def load_training_data():
     else:
         img_mean = [0.5, 0.5, 0.5]
         img_std = [0.5, 0.5, 0.5]
-    viz_transform =     T.Compose(
-                    [
-                        T.RandomResizedCrop(cfg.image_dim, scale=(0.5, 1.0)),
-                        T.ToTensor(),
-                        T.Normalize(mean=img_mean, std=img_std),
-                    ]
-                        )
+    
+    if cfg.model == "DF": #Deepfloyd specific augmentation
+        initial_size = math.ceil(1.2 * cfg.image_dim)
+        viz_transform = T.Compose(
+            [
+                T.Resize(initial_size, interpolation=3),
+                T.CenterCrop(initial_size),
+                T.RandomCrop(cfg.image_dim),
+                T.ToTensor(),
+                T.Normalize(mean=img_mean, std=img_std)
+            ]
+        )
+        
+    else:
+        viz_transform =     T.Compose(
+                        [
+                            T.RandomResizedCrop(cfg.image_dim, scale=(0.5, 1.0)),
+                            T.ToTensor(),
+                            T.Normalize(mean=img_mean, std=img_std),
+                        ]
+                            )
     # num_dataset_instances = xm.xrt_world_size() * cfg.num_workers
     num_dataset_instances = world_size * cfg.num_workers
     epoch_size = train_dataset_len // num_dataset_instances
@@ -169,8 +188,6 @@ def load_training_data():
 
     return train_dataset, train_loader, train_sampler
 
-
-
 def laion_cap_transform(x):
     return x[0]
 
@@ -200,22 +217,31 @@ def collate_fn(input_list):
     return input_list # torch.stack(img_list), torch.tensor(txt_list, dtype=torch.long)
 
 
-def train():
+def train(cfg):
     batch_size = cfg.batch_size
     num_epochs = cfg.num_epochs
     assert batch_size % get_world_size() == 0
     train_dataset, train_loader, train_sampler = load_training_data()
     local_batch_size = batch_size // (get_world_size() * cfg.accumulate_grad_iter)
     
-    model = create_sd_model(
-                   weighting_model_name=cfg.weighting_model_name,
-                   num_chain_timesteps=cfg.num_chain_timesteps,
-                   cond_dropout=cfg.cond_dropout,
-                   pretrained_unet=cfg.pretrained_unet,
+    if cfg.model == "DF":
+        model = create_df_model(
+            cond_dropout=cfg.cond_dropout,
+            pretrained_unet=cfg.pretrained_unet,
+            lora=cfg.lora,
+            pixel_space=cfg.pixel_space,
+            use_t5=cfg.use_t5
+        )
+    else:
+        model = create_sd_model(
+                    weighting_model_name=cfg.weighting_model_name,
+                    num_chain_timesteps=cfg.num_chain_timesteps,
+                    cond_dropout=cfg.cond_dropout,
+                    pretrained_unet=cfg.pretrained_unet,
                     lora=cfg.lora,
-                   pixel_space=cfg.pixel_space,
-                   use_t5=cfg.use_t5
-                   )
+                    pixel_space=cfg.pixel_space,
+                    use_t5=cfg.use_t5
+                    )
    #  model = SDModel(cond_dropout=cfg.cond_dropout,
    #                 pretrained_unet=cfg.pretrained_unet)
         
@@ -329,14 +355,24 @@ def train():
     )
 
     iters_per_epoch = train_dataset_len / batch_size if (not cfg.iters_per_epoch) else cfg.iters_per_epoch
-    lr_scheduler = get_warmup_to_constant_scheduler(
-        optimizer,
-        warmup_iteration=cfg.warmup_steps, #  / batch_ratio,
-    )
+    if cfg.model == 'DF':
+        steps = cfg.num_epochs * iters_per_epoch
+        lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, 
+            max_lr=cfg.max_lr, 
+            total_steps=steps,
+            pct_start=cfg.warmup_steps / steps, 
+            div_factor=cfg.max_lr/cfg.lr,
+            final_div_factor=cfg.lr/cfg.final_lr)
+    else:
+        lr_scheduler = get_warmup_to_constant_scheduler(
+            optimizer,
+            warmup_iteration=cfg.warmup_steps, #  / batch_ratio,
+        )
+        
     scaler = None
     if cfg.use_pytorch_amp:
         scaler = torch.cuda.amp.GradScaler()
-    loss_fn = CLIPLoss()
 
     resume_ckpt_path = None
     if cfg.resume_training:
@@ -368,7 +404,6 @@ def train():
         last_ckpt_epoch = 0
 
     synchronize()
-    smoothed_loss = SmoothedValue(window_size=20)
     model.train()
 
     master_print(
@@ -376,9 +411,19 @@ def train():
         "are very slow due to compilation)"
     )
     epoch = last_ckpt_epoch + 1
-
+    
+    # Setup logging
     logs = []
-    log_file = f'log_{cfg.ckpt_prefix}.txt'
+    # smoothed_loss = SmoothedValue(window_size=20)
+    if is_master():
+        if not cfg.resume_training:
+            cfg.ckpt_dir = os.path.join(cfg.ckpt_dir, datetime.now(tz=ZoneInfo("America/Los_Angeles")).strftime("%m%d_%H%M")) #MonthDay_HourMin
+            if "gs://" not in cfg.ckpt_dir:
+                os.makedirs(cfg.ckpt_dir)
+            with smart_open(os.path.join(cfg.ckpt_dir, 'config.json'), 'w') as f: #TODO: TEST GCS!!
+                json.dump(cfg, f, indent=2)
+        writer = SummaryWriter(cfg.ckpt_dir)
+    
     # print(get_rank())
     torch.manual_seed(get_rank())
     # print(torch.randint(0, cfg.num_noise_steps, (local_batch_size,)))
@@ -390,6 +435,7 @@ def train():
     while epoch <= num_epochs:
         master_print(f"starting epoch {epoch}")
         time_b = time.time()
+        time_log = perf_counter()
 
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
@@ -422,7 +468,7 @@ def train():
                     xm.mark_step()
                 continue
             step = step // cfg.accumulate_grad_iter
-
+            
             if (step+1 ) % cfg.log_step_interval == 0:
                 lr = optimizer.param_groups[0]["lr"]
                 # TODO: .detach().cpu(?).numpy()
@@ -431,18 +477,26 @@ def train():
                 else:
                     reduced_loss =   cfg.accumulate_grad_iter * reduce_tensor(loss, average=True).item()
                     # reduced_loss =  reduce_tensor(loss, average=True).item()
+                steps_per_second = cfg.log_step_interval / (perf_counter() - time_log)
                 master_print(
                         f"epoch {epoch} step {(step + 1)}, lr: {lr:.7f}, "
                         f"loss: {reduced_loss:.3f}, "
                         f"elapsed time: {time.time() - time_b} sec"
                 )
+                if is_master():
+                    global_step = ((epoch-1) * iters_per_epoch) + step + 1
+                    writer.add_scalar('loss', reduced_loss, global_step)
+                    writer.add_scalar('steps_per_second', steps_per_second, global_step)
+                    writer.add_scalar('lr', lr, global_step)
+                
+                time_log = perf_counter()
 
             # add termination on steps
             if ((step+1)%int(iters_per_epoch))==0:
 
                 time_elapsed = time.time() - time_b
                 master_print(f"epoch {epoch} done ({time_elapsed:.2f} sec)")
-
+                
                 info_dict = {"loss":reduced_loss, "epoch_time":time_elapsed, "epoch":epoch}
                 logs.append(info_dict)
                 # with open(log_file, 'w') as out_file:
@@ -474,7 +528,7 @@ def main(device_id, configuration):
     synchronize()
     master_print("\nconfig:")
     master_print(pprint.pformat(cfg), end="\n\n")
-    train()
+    train(cfg)
 
 
 if __name__ == "__main__":

@@ -11,12 +11,12 @@ cfg = AttrDict()
 # --------------------------------------------------------------------------- #
 cfg.device = "xla"  # "xla" or "cuda"
 cfg.log_step_interval = 50
-cfg.ckpt_epoch_interval = 5
-cfg.ckpt_dir = "/export/home/<ADD YOUR USERNAME>/"  
-cfg.ckpt_prefix = "sd"
+cfg.ckpt_epoch_interval = 1
+cfg.ckpt_dir = "/export/home/generative_sandbox/my_simclr_vit_profiling/ckpts"  
+cfg.ckpt_prefix = "df"
 cfg.load_model_ckpt_only = False
 
-cfg.resume_training = True
+cfg.resume_training = False
 cfg.resume_ckpt_path = "<auto-resume-latest>"
 cfg.pretrained_text_ckpt = ''
 
@@ -26,26 +26,28 @@ cfg.use_pytorch_amp = False
 # --------------------------------------------------------------------------- #
 # SD options
 # --------------------------------------------------------------------------- #
-cfg.model_name = 'CompVis/stable-diffusion-v1-4'
+cfg.model = "DF" #DF, corresponding to Stable-Diffusion or DeepFloyd models respectively
+cfg.model_name =  "DeepFloyd/IF-I-L-v1.0" #'CompVis/stable-diffusion-v1-4' #
 cfg.num_noise_steps = 1000
 cfg.cond_dropout = 0.1
 cfg.pretrained_unet = False
 cfg.lora = False
-cfg.image_dim = 256
+cfg.image_dim = 64 #256
 cfg.weighting_model_name = ''
 cfg.num_chain_timesteps = 1 # if >1 will train multistep
 cfg.print_unweighted_loss = False
-cfg.pixel_space = False
+cfg.pixel_space = True #True for DF, needed to use normalization transform
+cfg.use_t5 = False
 
 # --------------------------------------------------------------------------- #
 # data options
 # --------------------------------------------------------------------------- #
 cfg.fake_data = False
-cfg.data_dir = "gs://sfr-tpu-us-east1-research/bwallace/cc12m_shards"
+cfg.data_dir = "/export/laion2b/laion2B-en/data" #"gs://sfr-tpu-us-east1-research/bwallace/cc12m_shards"
 cfg.drop_last = True
 cfg.num_workers = 4
 cfg.initial_data_buffer = 10000
-cfg.iters_per_epoch = 0 # will default to train ds len
+cfg.iters_per_epoch = 10000 # will default to train ds len
 cfg.clean_caption = True
 
 # --------------------------------------------------------------------------- #
@@ -65,14 +67,16 @@ cfg.use_resnet18 = False
 # --------------------------------------------------------------------------- #
 # training options
 # --------------------------------------------------------------------------- #
-cfg.batch_size = 512
-cfg.accumulate_grad_iter = 1
+cfg.batch_size = 2048
+cfg.accumulate_grad_iter = 8
 cfg.lr = 1e-4
 cfg.weight_decay = 1e-2
 cfg.warmup_steps = 1e4
 cfg.override_opt_lr = False
+cfg.max_lr = 1e-4 # For DF's one-cycle LR policy
+cfg.final_lr = 1e-8 # For DF's one-cycle LR policy
 
-cfg.num_epochs = 35
+cfg.num_epochs = 100
 cfg.warmup_epochs = 1
 
 # --------------------------------------------------------------------------- #
