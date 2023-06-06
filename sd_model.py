@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import torchvision
+from torchvision import transforms
 from PIL import Image
 from distributed import (
     get_world_size,
@@ -25,6 +26,7 @@ import transformers
 from tqdm import tqdm
 # import clip
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, DDIMScheduler
+from transformers import CLIPVisionModel, CLIPVisionConfig, CLIPModel
 from diffusers.models.cross_attention import LoRACrossAttnProcessor
 from aesthetic_model import AestheticScorer
 
@@ -69,7 +71,7 @@ class AttnProcsLayers(torch.nn.Module):
                 del state_dict[key]
 
         self._register_state_dict_hook(map_to)
-        self._register_load_state_dict_pre_hook(map_from, with_module=True)
+        self._register_load_state_dict_pre_hook(map_from) # , with_module=True)
 
 
 class CLIPWeighting(nn.Module):
@@ -139,22 +141,47 @@ class SDModel(nn.Module):
     but more minimal and modular
     """
     def __init__(self,
-                model_config_name="CompVis/stable-diffusion-v1-4",
+                model_config_name="runwayml/stable-diffusion-v1-5",
+                # model_config_name="CompVis/stable-diffusion-v1-4",
                 latent_scale = 0.18215,
                 pretrained_unet=False,
                  lora=False,
                  cond_dropout=0.1,
                  weighting_module=None, # For reward training
-                 pixel_space=False
+                 pixel_space=False,
+                 cond_type='text',
+                 conditioning_pos_embedding=False
                 ):
         super().__init__()
         
         self.pixel_space = pixel_space
         # print("TODO: Freeze VAE + Text encoder")
         # print("TODO: Does Unet need better init?") # seems to converge OK
-        self.text_encoder = slip_models.CLIPTextPretrained()
         self.weighting_module = weighting_module
-        self.text_encoder.requires_grad_(False)
+        
+        self.cond_type = cond_type
+        if cond_type == 'text':
+            self.text_encoder = slip_models.CLIPTextPretrained()
+            self.text_encoder.requires_grad_(False)
+            self.tokenizer = transformers.CLIPTokenizer.from_pretrained(
+                    model_config_name,
+                subfolder="tokenizer",
+                revision=None
+                )
+        elif cond_type == 'image':
+            self.image_encoder = CLIPVisionModel.from_pretrained('openai/clip-vit-base-patch32')
+            self.image_encoder.requires_grad_(False)
+            self.cond_mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1)
+            self.cond_std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1)
+        else:
+            raise NotImplementedError
+        self.conditioning_pos_embedding = conditioning_pos_embedding
+        if self.conditioning_pos_embedding:
+            self.cond_pos_emb = torch.nn.Parameter( torch.zeros(1, 50 if cond_type=='image' else 77, 768) ) 
+            # self.num_positions = 50 if cond_type=='image' else 77
+            # self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)))
+            # self.cond_pos_emb = nn.Embedding(self.num_positions, 768)
+            # self.cond_pos_emb.weight.data.zero_()
         
         if not pixel_space:
             self.vae = AutoencoderKL.from_pretrained(model_config_name, 
@@ -176,6 +203,7 @@ class SDModel(nn.Module):
                 unet_cfg['out_channels'] = 3
             self.unet = UNet2DConditionModel.from_config(unet_cfg)
         if lora:
+            raise NotImplementedError # really pretty sure this doesn't work
             self.unet.requires_grad_(False)
             lora_attn_procs = {}
             for name in self.unet.attn_processors.keys():
@@ -202,11 +230,6 @@ class SDModel(nn.Module):
         self.latent_scale = latent_scale
 
         # Not needed for training but for generation
-        self.tokenizer = transformers.CLIPTokenizer.from_pretrained(
-                model_config_name,
-            subfolder="tokenizer",
-            revision=None
-            )
         self.cond_dropout = cond_dropout
         
         # slow startup on cpu but not sure how to handle on DDP
@@ -215,23 +238,28 @@ class SDModel(nn.Module):
     def initialize_uncond_hidden_states(self):
         
         with torch.no_grad():
-            uncond_tokenized_inputs = self.tokenizer(
-                                          '',
-                                          padding="max_length",
-                                          max_length=self.tokenizer.model_max_length,
-                                          truncation=True,
-                                          return_tensors='pt'
-            ).input_ids
-
-            self.encoder_hidden_states_UC = self.text_encoder(uncond_tokenized_inputs).detach()
-        
+            if self.cond_type == 'text':
+                uncond_tokenized_inputs = self.tokenizer(
+                                              '',
+                                              padding="max_length",
+                                              max_length=self.tokenizer.model_max_length,
+                                              truncation=True,
+                                              return_tensors='pt'
+                ).input_ids
+                self.encoder_hidden_states_UC = self.text_encoder(uncond_tokenized_inputs).detach()
+            elif self.cond_type == 'image':
+                self.encoder_hidden_states_UC = torch.zeros(1, 50, 768).to(self.image_encoder.device)
+                
     def train(self, mode=True):
         super(SDModel, self).train(mode=mode)
         if not self.pixel_space: self.vae.eval()
-        self.text_encoder.eval()
         if self.weighting_module is not None:
             self.weighting_module.eval()
-
+        if self.cond_type == 'text':
+            self.text_encoder.eval()
+        elif self.cond_type == 'image':
+            self.image_encoder.eval()
+    
     def weighting(self, input_dict, normalization='0_to_1'):
         # input will have 'img' 'txt' keys
         if self.weighting_module is None:
@@ -257,31 +285,47 @@ class SDModel(nn.Module):
 
     def forward(self, img, txt, timesteps=None, print_unweighted_loss=False):
         # Maybe could check if above is initialized but avoiding if/else
-        # print(img)
-        # print(txt)
-        # print(img.device)
         with torch.no_grad():
             # loss_weights = self.weighting_module(img, txt)
             loss_weights = self.weighting({"img":img, "txt":txt})
-            tokenized_txt = self.tokenizer(
-                                          txt, # ['asdf']*4,
-                                          padding="max_length",
-                                          max_length=self.tokenizer.model_max_length,
-                                          truncation=True,
-                                          return_tensors='pt').input_ids.to(self.unet.device)
-            encoder_hidden_states = self.text_encoder(tokenized_txt)
+            
+            if self.cond_type == 'text':
+                tokenized_txt = self.tokenizer(
+                                              txt, # ['asdf']*4,
+                                              padding="max_length",
+                                              max_length=self.tokenizer.model_max_length,
+                                              truncation=True,
+                                              return_tensors='pt').input_ids.to(self.unet.device)
+                encoder_hidden_states = self.text_encoder(tokenized_txt)
+            elif self.cond_type == 'image':
+                # resize img to 224 x 224
+                # normalize from 0.5 0.5 0.5 to 
+                # [0.48145466, 0.4578275, 0.40821073],
+                # [0.26862954, 0.26130258, 0.27577711]
+                cond_img = transforms.functional.resize(img, (224, 224))
+                # reset std
+                cond_img = cond_img * 0.5
+                # reset mean
+                cond_img = cond_img + 0.5
+                # apply new mean
+                cond_img = cond_img - self.cond_mean.to(cond_img.device)
+                # apply new std
+                cond_img = cond_img / self.cond_std.to(cond_img.device)
+                encoder_hidden_states = self.image_encoder(cond_img).last_hidden_state
             # Do dropout to null conditioning
             lbs = encoder_hidden_states.size(0)
-            mask = (torch.rand((lbs, 1, 1),
+            _, l, d = encoder_hidden_states.size()
+            
+            mask = (torch.rand((lbs, l if self.cond_type=='image' else 1, 1),
                                device=encoder_hidden_states.device) > self.cond_dropout)
 
-            _, l, d = encoder_hidden_states.size()
-            mask = mask.repeat(1, l, d)
+            mask = mask.repeat(1, 1 if self.cond_type=='image' else l, d)
 
-            uncond_hidden_states = self.encoder_hidden_states_UC.to(encoder_hidden_states.device).repeat(lbs, 1, 1).detach()
+            uncond_hidden_states = self.encoder_hidden_states_UC.to(encoder_hidden_states.device).repeat(lbs, 1, 1)
             encoder_hidden_states = torch.where(mask, 
                                                 encoder_hidden_states,
                                                 uncond_hidden_states)
+            
             
             if self.pixel_space:
                 latents = img
@@ -295,6 +339,11 @@ class SDModel(nn.Module):
                                           device=latents.device)
                 timesteps = timesteps.long()
             noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
+            
+        if self.conditioning_pos_embedding:
+            encoder_hidden_states = encoder_hidden_states + self.cond_pos_emb
+            # encoder_hidden_states = encoder_hidden_states + self.position_embedding(self.position_ids)
+            # print(self.cond_pos_emb)
 
         noise_pred = self.unet(noisy_latents,
                           timesteps, 
@@ -314,31 +363,111 @@ class SDModel(nn.Module):
     
     def generate(self, prompt, batch_size=1,
                 h=512, w=512, T=50, gs=7.5, seed=0,
-                silent=False):
+                silent=False,
+                null_cls=False, null_spatial=False,
+                repeat_cls=False,
+                null_bottom_half=False,
+                null_top_half=False,
+                reflect_vertically=False,
+                spatial_dropout=0.0):
         torch.manual_seed(seed)
         device = self.unet.device
         # modeling off of https://github.com/huggingface/diffusers/blob/main/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py#L604
         
         
         # Could condense
-        cond_tokenized_inputs = self.tokenizer(
-                                      prompt,
-                                      padding="max_length",
-                                      max_length=self.tokenizer.model_max_length,
-                                      truncation=True,
-                                      return_tensors='pt').input_ids.to(device)
-        encoder_hidden_states_C = self.text_encoder(cond_tokenized_inputs)
-        
-        uncond_tokenized_inputs = self.tokenizer(
-                                      '',
-                                      padding="max_length",
-                                      max_length=self.tokenizer.model_max_length,
-                                      truncation=True,
-                                      return_tensors='pt').input_ids.to(device)
-        encoder_hidden_states_UC = self.text_encoder(uncond_tokenized_inputs)
-        
-        encoder_hidden_states = torch.cat([encoder_hidden_states_UC,
-                                           encoder_hidden_states_C])
+        if self.cond_type == 'text':
+            assert isinstance(prompt, str)
+            num_prompt = 1
+            cond_tokenized_inputs = self.tokenizer(
+                                          prompt,
+                                          padding="max_length",
+                                          max_length=self.tokenizer.model_max_length,
+                                          truncation=True,
+                                          return_tensors='pt').input_ids.to(device)
+            encoder_hidden_states_C = self.text_encoder(cond_tokenized_inputs)
+
+            uncond_tokenized_inputs = self.tokenizer(
+                                          '',
+                                          padding="max_length",
+                                          max_length=self.tokenizer.model_max_length,
+                                          truncation=True,
+                                          return_tensors='pt').input_ids.to(device)
+            encoder_hidden_states_UC = self.text_encoder(uncond_tokenized_inputs)
+
+            encoder_hidden_states = torch.cat([encoder_hidden_states_UC,
+                                               encoder_hidden_states_C])
+        elif self.cond_type == 'image':
+            # prompt should be PIL Iimage
+            tform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Resize(
+                    (224, 224),
+                    interpolation=transforms.InterpolationMode.BICUBIC,
+                    antialias=False,
+                    ),
+                transforms.Normalize(
+                  [0.48145466, 0.4578275, 0.40821073],
+                  [0.26862954, 0.26130258, 0.27577711]),
+            ])
+            
+            if not isinstance(prompt, list): # if it's just a single PIL image
+                prompt = [prompt]
+            num_prompts = len(prompt)
+            
+            all_encoder_hidden_states_C = []
+            for img in prompt:
+                cond_img = tform(img).unsqueeze(0).to(device)
+                encoder_hidden_states_C = self.image_encoder(cond_img).last_hidden_state
+                if null_cls:
+                    encoder_hidden_states_C[:, 0] *= 0
+                if null_spatial:
+                    encoder_hidden_states_C[:, 1:] *= 0
+                if repeat_cls:
+                    encoder_hidden_states_C  = encoder_hidden_states_C[:, :1].repeat(1, encoder_hidden_states_C.size(1), 1)
+                if null_bottom_half:
+                    encoder_hidden_states_C[:, 15:] *= 0
+                if null_top_half:
+                    encoder_hidden_states_C[:, 1:36] *= 0
+                if reflect_vertically:
+                    indices = torch.arange(49).view(7,7).flip(0).flatten().to(encoder_hidden_states_C.device)
+                    cls = encoder_hidden_states_C[:, :1]
+                    # print(indices)
+                    spatial = encoder_hidden_states_C[:, 1:].index_select(1, indices)
+                    # print(cls.shape, spatial.shape)
+                    encoder_hidden_states_C = torch.cat([cls, spatial], dim=1)
+                all_encoder_hidden_states_C.append(encoder_hidden_states_C.clone())
+            if False:
+                print("Averaging hidden_states")
+                encoder_hidden_states_C = sum(all_encoder_hidden_states_C) / len(all_encoder_hidden_states_C)
+                num_prompts = 1
+            else:
+                encoder_hidden_states_C = torch.cat(all_encoder_hidden_states_C, dim=1)
+                
+            if spatial_dropout:
+                # Do dropout to null conditioning
+                lbs = encoder_hidden_states_C.size(0)
+                _, l, d = encoder_hidden_states_C.size()
+
+                mask = (torch.rand((lbs, l if self.cond_type=='image' else 1, 1),
+                                   device=encoder_hidden_states_C.device) > spatial_dropout)
+
+                mask = mask.repeat(1, 1 if self.cond_type=='image' else l, d)
+
+                uncond_hidden_states = self.encoder_hidden_states_UC.to(encoder_hidden_states_C.device).repeat(lbs, 1, 1)
+                encoder_hidden_states_C = torch.where(mask, 
+                                                    encoder_hidden_states_C,
+                                                    uncond_hidden_states)
+
+            encoder_hidden_states_UC = torch.zeros_like(encoder_hidden_states_C)
+            # 2, 50*prompt_len, 768 (prompt_len = 1 if not catting)
+            encoder_hidden_states = torch.cat([encoder_hidden_states_UC,
+                                                   encoder_hidden_states_C])
+            
+            # print(encoder_hidden_states.shape)
+        if self.conditioning_pos_embedding:
+            encoder_hidden_states += self.cond_pos_emb.repeat(1, num_prompts, 1)
+            
         
         # Prepare timesteps
         self.scheduler.set_timesteps(T, device=device)

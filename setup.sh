@@ -1,5 +1,5 @@
 pip install braceexpand
-pip install timm
+pip install timm==0.6.13
 pip install google-cloud-storage
 pip install tensorboardX
 pip install ftfy
@@ -11,6 +11,7 @@ pip install git+https://github.com/openai/CLIP.git
 pip install torchmetrics
 pip install open_clip_torch
 pip install pycocotools
+pip uninstall safetensors
 # pip install google-cloud-storage
 # pip install -r requirements.txt
 

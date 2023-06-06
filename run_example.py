@@ -142,7 +142,8 @@ def load_training_data():
         train_shards = glob(os.path.join(cfg.data_dir, "*", "*.tar"))
     else:
         raise NotImplementedError
-    # print(len(list(train_shards)))
+    print(cfg.data_dir)
+    print(len(list(train_shards)))
     
     chosen_cap_transform = cap_transform_clean if cfg.clean_caption else cap_transform
 
@@ -208,12 +209,14 @@ def train():
     local_batch_size = batch_size // (get_world_size() * cfg.accumulate_grad_iter)
     
     model = create_sd_model(
-                   weighting_model_name=cfg.weighting_model_name,
-                   num_chain_timesteps=cfg.num_chain_timesteps,
-                   cond_dropout=cfg.cond_dropout,
-                   pretrained_unet=cfg.pretrained_unet,
+                    weighting_model_name=cfg.weighting_model_name,
+                    num_chain_timesteps=cfg.num_chain_timesteps,
+                    cond_dropout=cfg.cond_dropout,
+                    pretrained_unet=cfg.pretrained_unet,
                     lora=cfg.lora,
-                   pixel_space=cfg.pixel_space
+                    pixel_space=cfg.pixel_space,
+                    cond_type=cfg.cond_type,
+                    conditioning_pos_embedding=cfg.conditioning_pos_embedding
                    )
    #  model = SDModel(cond_dropout=cfg.cond_dropout,
    #                 pretrained_unet=cfg.pretrained_unet)
