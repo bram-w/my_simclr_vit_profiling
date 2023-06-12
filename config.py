@@ -13,6 +13,7 @@ cfg.device = "xla"  # "xla" or "cuda"
 cfg.log_step_interval = 50
 cfg.ckpt_epoch_interval = 5
 cfg.ckpt_dir = "/export/home/<ADD YOUR USERNAME>/"  
+cfg.gcs_model_bucket = "gs://sfr-tpu-us-east1-research/bwallace/ckpts/models/sd"
 cfg.ckpt_prefix = "sd"
 cfg.load_model_ckpt_only = False
 

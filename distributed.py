@@ -340,7 +340,9 @@ def hacked_xla_save(data, file_or_path, master_only=True, global_master=False):
   should_write_data = not master_only or xm.is_master_ordinal(
       local=not global_master)
   print("Pushing to cpu")
-  cpu_data = xm._maybe_convert_to_cpu(data, convert=should_write_data)
+  # cpu_data = xm._maybe_convert_to_cpu(data, convert=should_write_data)
+  print("Forcing push to cpu (will fix after vacation but freezing at wokring state)")
+  cpu_data = xm._maybe_convert_to_cpu(data, convert=True)
   if True: # should_write_data: # Trying others saving to dummy
     if 'gs://' in file_or_path:
         print("Making blob")
@@ -356,10 +358,40 @@ def hacked_xla_save(data, file_or_path, master_only=True, global_master=False):
                 print("Actually saving")
                 torch.save(cpu_data, f)
   print("Rendezou")
-  xm.rendezvous('torch_xla.core.xla_model.save')
+  # xm.rendezvous('torch_xla.core.xla_model.save')
+
+def orig_xla_save(data, file_or_path, master_only=True, global_master=False):
+    print("Determining should_Write", flush=True)
+    should_write_data = not master_only or xm.is_master_ordinal(
+      local=not global_master)
+    print("Pushing to cpu", flush=True)
+    cpu_data = xm._maybe_convert_to_cpu(data, convert=should_write_data)
+    print("Actually doing save", flush=True)
+    if should_write_data:
+        torch.save(cpu_data, file_or_path)
+    print("Done saving, starting rendezvous", flush=True)
+    xm.rendezvous('torch_xla.core.xla_model.save')
+    print("Did rendezvous", flush=True)
+
+
+from torch_xla.utils.serialization import _rewrite_data, _get_tensors_folder
+def orig_xser_save(data, path, master_only=True, global_master=False):
+    print("Determining should_Write", flush=True)
+    should_write_data = not master_only or xm.is_master_ordinal(
+        local=not global_master)
+    print("Rewriting data", flush=True)
+    ref_data = _rewrite_data(_get_tensors_folder(path), data, should_write_data)
+    print("Actually doing save", flush=True)
+    if should_write_data:
+        torch.save(ref_data, path)
+    print("Done saving, starting rendezvous", flush=True)
+    xm.rendezvous('xser_save')
+    print("Did rendezvous", flush=True)
+
+
 
 def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
-    print("Creatin ckpt")
+    master_print("Creatin ckpt")
     ckpt = {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -369,8 +401,15 @@ def save_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler, meta_data):
     if scaler is not None:
         ckpt["scaler"] = scaler.state_dict()
     if is_xla():
-        print("USing hacked xla save")
-        hacked_xla_save(ckpt, ckpt_path, global_master=True)
+        if 'gs:/' in ckpt_path:
+            print("USing hacked xla save")
+            hacked_xla_save(ckpt, ckpt_path, global_master=True)
+        else:
+            master_print("Using gentlemanly disc save")
+            # xm.save(ckpt, ckpt_path, global_master=True)
+            orig_xla_save(ckpt, ckpt_path, global_master=True)
+            # orig_xser_save(ckpt, ckpt_path, global_master=True)
+            master_print("Done saving to disc")
     else:
         if is_master():
             if 'gs:/' in ckpt_path:
@@ -503,7 +542,12 @@ def load_ckpt(ckpt_path, model, optimizer, lr_scheduler, scaler,
             ckpt = torch.load(ckpt_path, map_location="cpu")
     else:
         ckpt = torch.load(ckpt_path, map_location=f"cuda:{cfg.device_id}")
-    model.load_state_dict(ckpt["model"])
+    model_sd = ckpt["model"]
+    if is_xla():
+        model_sd = {k.replace('module.', ''):v for k,v in model_sd.items()}
+    else:
+        model_sd = {'module.' + k:v for k,v in model_sd.items() if k[:7]!='module.'}
+    model.load_state_dict(model_sd)
     if not load_model_ckpt_only:
         optimizer.load_state_dict(ckpt["optimizer"])
         lr_scheduler.load_state_dict(ckpt["lr_scheduler"])

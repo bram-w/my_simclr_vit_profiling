@@ -1,5 +1,6 @@
 pip install braceexpand
-pip install timm
+pip install bs4
+pip install timm==0.6.13
 pip install google-cloud-storage
 pip install tensorboardX
 pip install ftfy
