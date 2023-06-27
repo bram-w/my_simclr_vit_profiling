@@ -29,6 +29,7 @@ from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, DDIMSc
 from transformers import CLIPVisionModel, CLIPVisionConfig, CLIPModel
 from diffusers.models.cross_attention import LoRACrossAttnProcessor
 from aesthetic_model import AestheticScorer
+import bagnet
 
 # from diffusers.loaders import AttnProcsLayers
 
@@ -150,7 +151,8 @@ class SDModel(nn.Module):
                  weighting_module=None, # For reward training
                  pixel_space=False,
                  cond_type='text',
-                 conditioning_pos_embedding=False
+                 conditioning_pos_embedding=False,
+                 bagnet_cond=False
                 ):
         super().__init__()
         
@@ -169,15 +171,30 @@ class SDModel(nn.Module):
                 revision=None
                 )
         elif cond_type == 'image':
-            self.image_encoder = CLIPVisionModel.from_pretrained('openai/clip-vit-base-patch32')
+            self.bagnet_cond = bagnet_cond  # just throwing in for now, could be cleaner
+            if bagnet_cond:
+                self.image_encoder = bagnet.bagnet33(True)
+                self.cond_mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+                self.cond_std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+                self.cond_fc = torch.nn.Linear(2048, 768)
+            else:
+                self.image_encoder = CLIPVisionModel.from_pretrained('openai/clip-vit-base-patch32')
+                self.cond_mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1)
+                self.cond_std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1)
             self.image_encoder.requires_grad_(False)
-            self.cond_mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1)
-            self.cond_std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1)
+            print(self.image_encoder)
         else:
             raise NotImplementedError
         self.conditioning_pos_embedding = conditioning_pos_embedding
         if self.conditioning_pos_embedding:
-            self.cond_pos_emb = torch.nn.Parameter( torch.zeros(1, 50 if cond_type=='image' else 77, 768) ) 
+            if cond_type=='image': # ugly but hacking
+                if bagnet_cond:
+                    cond_dim = 144
+                else:
+                    cond_dim = 50
+            else:
+                cond_im = 77 
+            self.cond_pos_emb = torch.nn.Parameter( torch.zeros(1, cond_dim, 768) ) 
             # self.num_positions = 50 if cond_type=='image' else 77
             # self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)))
             # self.cond_pos_emb = nn.Embedding(self.num_positions, 768)
@@ -248,7 +265,7 @@ class SDModel(nn.Module):
                 ).input_ids
                 self.encoder_hidden_states_UC = self.text_encoder(uncond_tokenized_inputs).detach()
             elif self.cond_type == 'image':
-                self.encoder_hidden_states_UC = torch.zeros(1, 50, 768).to(self.image_encoder.device)
+                self.encoder_hidden_states_UC = torch.zeros(1, 144 if self.bagnet_cond else 50, 768).to(self.unet.device)
                 
     def train(self, mode=True):
         super(SDModel, self).train(mode=mode)
@@ -284,7 +301,7 @@ class SDModel(nn.Module):
         return weights
 
     def forward(self, img, txt, timesteps=None, print_unweighted_loss=False):
-        # Maybe could check if above is initialized but avoiding if/else
+        # Below got ugly w/ possibility of learning embeddings fc
         with torch.no_grad():
             # loss_weights = self.weighting_module(img, txt)
             loss_weights = self.weighting({"img":img, "txt":txt})
@@ -311,7 +328,21 @@ class SDModel(nn.Module):
                 cond_img = cond_img - self.cond_mean.to(cond_img.device)
                 # apply new std
                 cond_img = cond_img / self.cond_std.to(cond_img.device)
-                encoder_hidden_states = self.image_encoder(cond_img).last_hidden_state
+                if self.bagnet_cond:
+                    encoder_hidden_states = self.image_encoder.feature_map_forward(cond_img) # BS x 2048 x 24 x 24
+                    # downsample, still have large overlapping receptive field
+                    encoder_hidden_states = encoder_hidden_states[:, :, ::2, ::2] # BS x 2048 x 12 x 12
+                    # just filling in to 4096, being lazy
+                    # actually need this to be 768 from 2048
+                    encoder_hidden_states = encoder_hidden_states.flatten(start_dim=2) # BS x 2048 x 144
+                    encoder_hidden_states = encoder_hidden_states.permute(0, 2, 1) # BS x 144 x 2048
+                    # print(self.cond_fc.bias[:5])
+                else:
+                    encoder_hidden_states = self.image_encoder(cond_img).last_hidden_state
+        if self.cond_type == 'image' and self.bagnet_cond:
+            encoder_hidden_states = self.cond_fc(encoder_hidden_states) # BS x 144 x 768
+        with torch.no_grad():
+
             # Do dropout to null conditioning
             lbs = encoder_hidden_states.size(0)
             _, l, d = encoder_hidden_states.size()
@@ -322,10 +353,11 @@ class SDModel(nn.Module):
             mask = mask.repeat(1, 1 if self.cond_type=='image' else l, d)
 
             uncond_hidden_states = self.encoder_hidden_states_UC.to(encoder_hidden_states.device).repeat(lbs, 1, 1)
-            encoder_hidden_states = torch.where(mask, 
-                                                encoder_hidden_states,
-                                                uncond_hidden_states)
             
+        encoder_hidden_states = torch.where(mask, 
+                                            encoder_hidden_states,
+                                            uncond_hidden_states)
+        with torch.no_grad():     
             
             if self.pixel_space:
                 latents = img
@@ -457,7 +489,8 @@ class SDModel(nn.Module):
                 uncond_hidden_states = self.encoder_hidden_states_UC.to(encoder_hidden_states_C.device).repeat(lbs, 1, 1)
                 encoder_hidden_states_C = torch.where(mask, 
                                                     encoder_hidden_states_C,
-                                                    uncond_hidden_states)
+                                                    uncond_hidden_states.repeat(1, len(prompt), 1)
+                                                     )
 
             encoder_hidden_states_UC = torch.zeros_like(encoder_hidden_states_C)
             # 2, 50*prompt_len, 768 (prompt_len = 1 if not catting)

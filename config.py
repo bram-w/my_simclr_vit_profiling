@@ -30,6 +30,7 @@ cfg.model_name = 'CompVis/stable-diffusion-v1-4'
 cfg.num_noise_steps = 1000
 cfg.cond_dropout = 0.1
 cfg.cond_type = 'text'
+cfg.bagnet_cond = False
 cfg.conditioning_pos_embedding = False # add positional embedding (init at 0s) to encoder_hidden_states
 cfg.pretrained_unet = False
 cfg.lora = False

@@ -216,6 +216,7 @@ def train():
                     lora=cfg.lora,
                     pixel_space=cfg.pixel_space,
                     cond_type=cfg.cond_type,
+                    bagnet_cond=cfg.bagnet_cond,
                     conditioning_pos_embedding=cfg.conditioning_pos_embedding
                    )
    #  model = SDModel(cond_dropout=cfg.cond_dropout,
