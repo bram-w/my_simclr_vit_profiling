@@ -7,7 +7,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from distributed import gather_tensor_with_backward, get_rank, get_world_size, master_print, reduce_sum_with_backward, xla_all_reduce_sum_with_backward
-import numpy as np
 
 
 def normal_kl(mean1, logvar1, mean2, logvar2):

@@ -2,6 +2,22 @@ from collections import deque
 
 import numpy as np
 
+from datetime import datetime
+import random
+import os
+import torch
+
+def seed_everything(seed=None):
+    if seed is None:
+        seed = int((datetime.utcnow().timestamp() * 10 ** 6) % (2 ** 32 - 1))
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = True
+    return seed
 
 class AttrDict(dict):
     def __getattr__(self, name):

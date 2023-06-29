@@ -11,7 +11,6 @@ from PIL import Image
 import numpy as np
 import math
 from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5Tokenizer
-from tqdm import tqdm
 from diffusers import UNet2DConditionModel
 from losses import normal_kl, discretized_gaussian_log_likelihood, mean_flat
 
@@ -91,7 +90,7 @@ class DFModel(nn.Module):
         ## Setup Diffusion process ##
         betas = get_named_beta_schedule(beta_schedule_name, num_diffusion_timesteps)
         betas = np.array(betas, dtype=np.float64)
-        self._set_betas(betas)
+        self._set_betas(betas) # Betas will become torch tensor!
         self.original_num_timesteps = self.num_timesteps  # For generations which don't use full chain
         self.timestep_map = np.arange(self.num_timesteps)
         
@@ -156,24 +155,24 @@ class DFModel(nn.Module):
     def _set_betas(self, betas: np.ndarray):
         assert len(betas.shape) == 1, 'betas must be 1-D'
         assert (betas > 0).all() and (betas <= 1).all()
-        self.betas = betas
+        self.betas = torch.tensor(betas, dtype=torch.float64)
         self.num_timesteps = int(self.betas.shape[0])
         
         return
 
-    def setup_diffusion_constants(self, betas: np.ndarray):
+    def setup_diffusion_constants(self, betas):
         alphas = 1.0 - betas
-        self.alphas_cumprod = np.cumprod(alphas, axis=0)
-        self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
-        self.alphas_cumprod_next = np.append(self.alphas_cumprod[1:], 0.0)
+        self.alphas_cumprod = torch.tensor(np.cumprod(alphas, axis=0))
+        self.alphas_cumprod_prev = torch.tensor(np.append(1.0, self.alphas_cumprod[:-1]))
+        self.alphas_cumprod_next = torch.tensor(np.append(self.alphas_cumprod[1:], 0.0))
         assert self.alphas_cumprod_prev.shape == (self.num_timesteps,)
 
         # calculations for diffusion q(x_t | x_{t-1}) and others
-        self.sqrt_alphas_cumprod = np.sqrt(self.alphas_cumprod)
-        self.sqrt_one_minus_alphas_cumprod = np.sqrt(1.0 - self.alphas_cumprod)
-        self.log_one_minus_alphas_cumprod = np.log(1.0 - self.alphas_cumprod)
-        self.sqrt_recip_alphas_cumprod = np.sqrt(1.0 / self.alphas_cumprod)
-        self.sqrt_recipm1_alphas_cumprod = np.sqrt(1.0 / self.alphas_cumprod - 1)
+        self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
+        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - self.alphas_cumprod)
+        self.log_one_minus_alphas_cumprod = torch.log(1.0 - self.alphas_cumprod)
+        self.sqrt_recip_alphas_cumprod = torch.sqrt(1.0 / self.alphas_cumprod)
+        self.sqrt_recipm1_alphas_cumprod = torch.sqrt(1.0 / self.alphas_cumprod - 1)
 
         # calculations for posterior q(x_{t-1} | x_t, x_0)
         self.posterior_variance = (
@@ -181,17 +180,18 @@ class DFModel(nn.Module):
         )
         # log calculation clipped because the posterior variance is 0 at the
         # beginning of the diffusion chain.
-        self.posterior_log_variance_clipped = np.log(
-            np.append(self.posterior_variance[1], self.posterior_variance[1:])
+        self.posterior_log_variance_clipped = torch.log(
+            torch.cat([self.posterior_variance[1].unsqueeze(0), self.posterior_variance[1:]])
         )
         self.posterior_mean_coef1 = (
-            betas * np.sqrt(self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+            betas * torch.sqrt(self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
         )
         self.posterior_mean_coef2 = (
             (1.0 - self.alphas_cumprod_prev)
-            * np.sqrt(alphas)
+            * torch.sqrt(alphas)
             / (1.0 - self.alphas_cumprod)
         )
+        
         return
     
     def dynamic_thresholding(self, x, p=0.995, c=1.7):
@@ -297,7 +297,7 @@ class DFModel(nn.Module):
         min_log = _extract_into_tensor(
             self.posterior_log_variance_clipped, t, x.shape
         )
-        max_log = _extract_into_tensor(np.log(self.betas), t, x.shape)
+        max_log = _extract_into_tensor(torch.log(self.betas), t, x.shape)
         # The model_var_values is [-1, 1] for [min_var, max_var].
         frac = (model_var_values + 1) / 2
         model_log_variance = frac * max_log + (1 - frac) * min_log
@@ -382,13 +382,13 @@ class DFModel(nn.Module):
         kl = normal_kl(
             true_mean, true_log_variance_clipped, out['mean'], out['log_variance']
         )
-        kl = mean_flat(kl) / np.log(2.0)
+        kl = mean_flat(kl) / math.log(2.0)
 
         decoder_nll = -discretized_gaussian_log_likelihood(
             x_start, means=out['mean'], log_scales=0.5 * out['log_variance']
         )
         assert decoder_nll.shape == x_start.shape
-        decoder_nll = mean_flat(decoder_nll) / np.log(2.0)
+        decoder_nll = mean_flat(decoder_nll) / math.log(2.0)
 
         # At the first timestep return the decoder NLL,
         # otherwise return KL(q(x_{t-1}|x_t,x_0) || p(x_{t-1}|x_t))
@@ -932,16 +932,16 @@ def space_timesteps(num_timesteps, section_counts):
         start_idx += size
     return set(all_steps)
 
-def _extract_into_tensor(arr, timesteps, broadcast_shape):
+def _extract_into_tensor(tensor, timesteps, broadcast_shape):
     """
-    Extract values from a 1-D numpy array for a batch of indices.
-    :param arr: the 1-D numpy array.
+    Extract values from a 1-D torch tensor for a batch of indices.
+    :param tensor: the 1-D torch tensor.
     :param timesteps: a tensor of indices into the array to extract.
     :param broadcast_shape: a larger shape of K dimensions with the batch
                             dimension equal to the length of timesteps.
     :return: a tensor of shape [batch_size, 1, ...] where the shape has K dims.
     """
-    res = torch.from_numpy(arr).to(device=timesteps.device)[timesteps].float()
+    res = tensor.to(device=timesteps.device)[timesteps].float()
     while len(res.shape) < len(broadcast_shape):
         res = res[..., None]
     return res.expand(broadcast_shape)
