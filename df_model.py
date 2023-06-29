@@ -833,7 +833,7 @@ class DFModel(nn.Module):
         text_emb = self.get_text_embeddings(prompt).to(self.device, dtype=self.unet.dtype).repeat(batch_size, 1, 1)
         batch_size = text_emb.shape[0] * batch_repeat
         encoder_hidden_states = torch.cat([text_emb, 
-                                           self.encoder_hidden_states_UC.repeat(batch_size, 1, 1)],
+                                           self.encoder_hidden_states_UC.to(self.device).repeat(batch_size, 1, 1)],
                                           axis=0)
         model_kwargs = dict(
             encoder_hidden_states=encoder_hidden_states,
