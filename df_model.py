@@ -943,6 +943,6 @@ def _extract_into_tensor(tensor, timesteps, broadcast_shape):
     """
     res = tensor.to(device=timesteps.device)[timesteps].float()
     while len(res.shape) < len(broadcast_shape):
-        res = res[..., None]
+        res = res.unsqueeze(-1)
     return res
     # return res.expand(broadcast_shape)
