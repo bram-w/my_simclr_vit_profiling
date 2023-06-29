@@ -162,9 +162,9 @@ class DFModel(nn.Module):
 
     def setup_diffusion_constants(self, betas):
         alphas = 1.0 - betas
-        self.alphas_cumprod = torch.tensor(torch.cumprod(alphas, dim=0))
-        self.alphas_cumprod_prev = torch.tensor(np.append(1.0, self.alphas_cumprod[:-1]))
-        self.alphas_cumprod_next = torch.tensor(np.append(self.alphas_cumprod[1:], 0.0))
+        self.alphas_cumprod = torch.cumprod(alphas, dim=0)
+        self.alphas_cumprod_prev = torch.cat([torch.tensor([1.0]), self.alphas_cumprod[:-1]])
+        self.alphas_cumprod_next = torch.cat([self.alphas_cumprod[1:], torch.tensor([0.0])])
         assert self.alphas_cumprod_prev.shape == (self.num_timesteps,)
 
         # calculations for diffusion q(x_t | x_{t-1}) and others
@@ -944,4 +944,5 @@ def _extract_into_tensor(tensor, timesteps, broadcast_shape):
     res = tensor.to(device=timesteps.device)[timesteps].float()
     while len(res.shape) < len(broadcast_shape):
         res = res[..., None]
-    return res.expand(broadcast_shape)
+    return res
+    # return res.expand(broadcast_shape)
