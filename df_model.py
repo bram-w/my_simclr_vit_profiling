@@ -162,7 +162,7 @@ class DFModel(nn.Module):
 
     def setup_diffusion_constants(self, betas):
         alphas = 1.0 - betas
-        self.alphas_cumprod = torch.tensor(np.cumprod(alphas, axis=0))
+        self.alphas_cumprod = torch.tensor(torch.cumprod(alphas, dim=0))
         self.alphas_cumprod_prev = torch.tensor(np.append(1.0, self.alphas_cumprod[:-1]))
         self.alphas_cumprod_next = torch.tensor(np.append(self.alphas_cumprod[1:], 0.0))
         assert self.alphas_cumprod_prev.shape == (self.num_timesteps,)
@@ -832,7 +832,7 @@ class DFModel(nn.Module):
         seed = seed_everything(seed)
         text_emb = self.get_text_embeddings(prompt).to(self.device, dtype=self.unet.dtype).repeat(batch_size, 1, 1)
         batch_size = text_emb.shape[0] * batch_repeat
-        encoder_hidden_states = torch.cat([text_emb, 
+        encoder_hidden_states = torch.cat([text_emb,
                                            self.encoder_hidden_states_UC.to(self.device).repeat(batch_size, 1, 1)],
                                           axis=0)
         model_kwargs = dict(
