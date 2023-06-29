@@ -1,4 +1,5 @@
 """ Largely imported from DF codebase (https://github.com/deep-floyd/IF/main/deepfloyd_if/model/gaussian_diffusion.py)"""
+from typing import List, Optional
 import torch
 from torch import nn
 from distributed import (
@@ -6,12 +7,15 @@ from distributed import (
     is_xla,
     gather_tensor_with_backward
 )
+from PIL import Image
 import numpy as np
 import math
 from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5Tokenizer
 from tqdm import tqdm
 from diffusers import UNet2DConditionModel
 from losses import normal_kl, discretized_gaussian_log_likelihood, mean_flat
+
+from utils import seed_everything
 
 def get_named_beta_schedule(schedule_name: str = 'cosine', num_diffusion_timesteps: int=1000):
     """
@@ -58,6 +62,17 @@ def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
     return np.array(betas)
 
 class DFModel(nn.Module):
+    respacing_modes = {
+        'fast27': '10,10,3,2,2',
+        'smart27': '7,4,2,1,2,4,7',
+        'smart50': '10,6,4,3,2,2,3,4,6,10',
+        'smart100': '1,1,1,1,2,2,2,2,2,2,3,3,4,4,5,5,6,7,7,8,9,10,13',
+        'smart185': '1,1,2,2,2,3,3,3,4,5,6,7,8,9,10,11,12,13,14,15,16,18,20',
+        'super27': '1,1,1,1,1,1,1,2,5,13',  # for III super-res
+        'super40': '2,2,2,2,2,2,3,4,6,15',  # for III super-res
+        'super100': '4,4,6,6,8,8,10,10,14,30',  # for III super-res
+    }
+    
     def __init__(self,
                 model_config_name: str = "DeepFloyd/IF-I-M-v1.0",
                 beta_schedule_name: str ="cosine",
@@ -76,12 +91,11 @@ class DFModel(nn.Module):
         ## Setup Diffusion process ##
         betas = get_named_beta_schedule(beta_schedule_name, num_diffusion_timesteps)
         betas = np.array(betas, dtype=np.float64)
-        self.betas = betas
-        assert len(betas.shape) == 1, 'betas must be 1-D'
-        assert (betas > 0).all() and (betas <= 1).all()
-        self.num_timesteps = int(betas.shape[0])
+        self._set_betas(betas)
+        self.original_num_timesteps = self.num_timesteps  # For generations which don't use full chain
+        self.timestep_map = np.arange(self.num_timesteps)
         
-        self.setup_diffusion_constants()
+        self.setup_diffusion_constants(self.betas)
         
         ## Get Models ##
         # Text encoder & Tokenizer
@@ -139,8 +153,16 @@ class DFModel(nn.Module):
         super(DFModel, self).train(mode=mode)
         self.text_encoder.eval()
 
-    def setup_diffusion_constants(self):
-        alphas = 1.0 - self.betas
+    def _set_betas(self, betas: np.ndarray):
+        assert len(betas.shape) == 1, 'betas must be 1-D'
+        assert (betas > 0).all() and (betas <= 1).all()
+        self.betas = betas
+        self.num_timesteps = int(self.betas.shape[0])
+        
+        return
+
+    def setup_diffusion_constants(self, betas: np.ndarray):
+        alphas = 1.0 - betas
         self.alphas_cumprod = np.cumprod(alphas, axis=0)
         self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
         self.alphas_cumprod_next = np.append(self.alphas_cumprod[1:], 0.0)
@@ -155,7 +177,7 @@ class DFModel(nn.Module):
 
         # calculations for posterior q(x_{t-1} | x_t, x_0)
         self.posterior_variance = (
-            self.betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+            betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
         )
         # log calculation clipped because the posterior variance is 0 at the
         # beginning of the diffusion chain.
@@ -163,7 +185,7 @@ class DFModel(nn.Module):
             np.append(self.posterior_variance[1], self.posterior_variance[1:])
         )
         self.posterior_mean_coef1 = (
-            self.betas * np.sqrt(self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+            betas * np.sqrt(self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
         )
         self.posterior_mean_coef2 = (
             (1.0 - self.alphas_cumprod_prev)
@@ -314,9 +336,11 @@ class DFModel(nn.Module):
         )
 
     def _scale_timesteps(self, t):
+        map_tensor = torch.tensor(self.timestep_map, device=t.device, dtype=t.dtype)
+        new_t = map_tensor[t]
         if self.rescale_timesteps:
-            return t.float() * (1000.0 / self.num_timesteps)
-        return t
+            return new_t.float() * (1000.0 / self.original_num_timesteps)
+        return new_t
     
     @torch.no_grad()
     def get_text_embeddings(self, text: str):
@@ -425,20 +449,488 @@ class DFModel(nn.Module):
         loss += vb
         
         if print_unweighted_loss and is_master():
-            assert not is_xla() # would slow down too much
+            assert not is_xla()  # would slow down too much
             with torch.no_grad():
                 avg_loss = loss.mean()
                 print(f"Loss: {avg_loss.item():.3f}")
         return loss.mean()
     
+    def p_sample(
+        self, model, x, t, clip_denoised=True, dynamic_thresholding_p=0.99, dynamic_thresholding_c=1.7,
+        denoised_fn=None, model_kwargs=None, inpainting_mask=None,
+    ):
+        """
+        Sample x_{t-1} from the model at the given timestep.
+        :param model: the model to sample from.
+        :param x: the current tensor at x_{t-1}.
+        :param t: the value of t, starting at 0 for the first diffusion step.
+        :param clip_denoised: if True, clip the x_start prediction to [-1, 1].
+        :param denoised_fn: if not None, a function which applies to the
+            x_start prediction before it is used to sample.
+        :param model_kwargs: if not None, a dict of extra keyword arguments to
+            pass to the model. This can be used for conditioning.
+        :return: a dict containing the following keys:
+                 - 'sample': a random sample from the model.
+                 - 'pred_xstart': a prediction of x_0.
+        """
+        model_output = model(x, self._scale_timesteps(t), **model_kwargs)
+        out = self.p_mean_variance(
+            model_output,
+            x,
+            t,
+            clip_denoised=clip_denoised,
+            dynamic_thresholding_p=dynamic_thresholding_p,
+            dynamic_thresholding_c=dynamic_thresholding_c,
+            denoised_fn=denoised_fn,
+        )
+        noise = torch.randn_like(x)
+        nonzero_mask = (
+            (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
+        )  # no noise when t == 0
+        if inpainting_mask is None:
+            inpainting_mask = torch.ones_like(x, device=x.device)
+
+        sample = out['mean'] + nonzero_mask * torch.exp(0.5 * out['log_variance']) * noise
+        sample = (1 - inpainting_mask)*x + inpainting_mask*sample
+        return {'sample': sample, 'pred_xstart': out['pred_xstart']}
+
+    def p_sample_loop(
+        self,
+        model,
+        shape,
+        noise=None,
+        clip_denoised=True,
+        dynamic_thresholding_p=0.99,
+        dynamic_thresholding_c=1.7,
+        inpainting_mask=None,
+        denoised_fn=None,
+        model_kwargs=None,
+        device=None,
+        progress=False,
+        sample_fn=None,
+    ):
+        """
+        Generate samples from the model.
+        :param model: the model module.
+        :param shape: the shape of the samples, (N, C, H, W).
+        :param noise: if specified, the noise from the encoder to sample.
+                      Should be of the same shape as `shape`.
+        :param clip_denoised: if True, clip x_start predictions to [-1, 1].
+        :param denoised_fn: if not None, a function which applies to the
+            x_start prediction before it is used to sample.
+        :param model_kwargs: if not None, a dict of extra keyword arguments to
+            pass to the model. This can be used for conditioning.
+        :param device: if specified, the device to create the samples on.
+                       If not specified, use a model parameter's device.
+        :param progress: if True, show a tqdm progress bar.
+        :return: a non-differentiable batch of samples.
+        """
+        final = None
+        for step_idx, sample in enumerate(self.p_sample_loop_progressive(
+            model,
+            shape,
+            noise=noise,
+            clip_denoised=clip_denoised,
+            dynamic_thresholding_p=dynamic_thresholding_p,
+            dynamic_thresholding_c=dynamic_thresholding_c,
+            denoised_fn=denoised_fn,
+            inpainting_mask=inpainting_mask,
+            model_kwargs=model_kwargs,
+            device=device,
+            progress=progress,
+        )):
+            if sample_fn is not None:
+                sample = sample_fn(step_idx, sample)
+            final = sample
+        return final['sample']
+
+    def p_sample_loop_progressive(
+        self,
+        model,
+        shape,
+        inpainting_mask=None,
+        noise=None,
+        clip_denoised=True,
+        dynamic_thresholding_p=0.99,
+        dynamic_thresholding_c=1.7,
+        denoised_fn=None,
+        model_kwargs=None,
+        device=None,
+        progress=False,
+    ):
+        """
+        Generate samples from the model and yield intermediate samples from
+        each timestep of diffusion.
+        Arguments are the same as p_sample_loop().
+        Returns a generator over dicts, where each dict is the return value of
+        p_sample().
+        """
+        if device is None:
+            device = self.device
+        assert isinstance(shape, (tuple, list))
+        if noise is not None:
+            img = noise
+        else:
+            img = torch.randn(*shape, device=device)
+        indices = list(range(self.num_timesteps))[::-1]
+
+        if progress:
+            # Lazy import so that we don't depend on tqdm.
+            from tqdm.auto import tqdm
+
+            indices = tqdm(indices)
+
+        for i in indices:
+            t = torch.tensor([i] * shape[0], device=device)
+            with torch.no_grad():
+                out = self.p_sample(
+                    model,
+                    img,
+                    t,
+                    clip_denoised=clip_denoised,
+                    dynamic_thresholding_p=dynamic_thresholding_p,
+                    dynamic_thresholding_c=dynamic_thresholding_c,
+                    denoised_fn=denoised_fn,
+                    inpainting_mask=inpainting_mask,
+                    model_kwargs=model_kwargs,
+                )
+                yield out
+                img = out['sample']
+
+    def ddim_sample(
+        self,
+        model,
+        x,
+        t,
+        clip_denoised=True,
+        dynamic_thresholding_p=0.99,
+        dynamic_thresholding_c=1.7,
+        denoised_fn=None,
+        model_kwargs=None,
+        eta=0.0,
+    ):
+        """
+        Sample x_{t-1} from the model using DDIM.
+        Same usage as p_sample().
+        """
+        model_output = model(x, self._scale_timesteps(t), **model_kwargs)
+        out = self.p_mean_variance(
+            model_output,
+            x,
+            t,
+            dynamic_thresholding_p=dynamic_thresholding_p,
+            dynamic_thresholding_c=dynamic_thresholding_c,
+            clip_denoised=clip_denoised,
+            denoised_fn=denoised_fn,
+            model_kwargs=model_kwargs,
+        )
+        # Usually our model outputs epsilon, but we re-derive it
+        # in case we used x_start or x_prev prediction.
+        eps = self._predict_eps_from_xstart(x, t, out['pred_xstart'])
+        alpha_bar = _extract_into_tensor(self.alphas_cumprod, t, x.shape)
+        alpha_bar_prev = _extract_into_tensor(self.alphas_cumprod_prev, t, x.shape)
+        sigma = (
+            eta
+            * torch.sqrt((1 - alpha_bar_prev) / (1 - alpha_bar))
+            * torch.sqrt(1 - alpha_bar / alpha_bar_prev)
+        )
+        # Equation 12.
+        noise = torch.randn_like(x)
+        mean_pred = (
+            out['pred_xstart'] * torch.sqrt(alpha_bar_prev)
+            + torch.sqrt(1 - alpha_bar_prev - sigma ** 2) * eps
+        )
+        nonzero_mask = (
+            (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
+        )  # no noise when t == 0
+        sample = mean_pred + nonzero_mask * sigma * noise
+        return {'sample': sample, 'pred_xstart': out['pred_xstart']}
+
+    def ddim_reverse_sample(
+        self,
+        model,
+        x,
+        t,
+        clip_denoised=True,
+        dynamic_thresholding_p=0.99,
+        dynamic_thresholding_c=1.7,
+        denoised_fn=None,
+        model_kwargs=None,
+        eta=0.0,
+    ):
+        """
+        Sample x_{t+1} from the model using DDIM reverse ODE.
+        """
+        assert eta == 0.0, 'Reverse ODE only for deterministic path'
+        out = self.p_mean_variance(
+            model,
+            x,
+            t,
+            clip_denoised=clip_denoised,
+            dynamic_thresholding_p=dynamic_thresholding_p,
+            dynamic_thresholding_c=dynamic_thresholding_c,
+            denoised_fn=denoised_fn,
+            model_kwargs=model_kwargs,
+        )
+        # Usually our model outputs epsilon, but we re-derive it
+        # in case we used x_start or x_prev prediction.
+        eps = (
+            _extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x.shape) * x
+            - out['pred_xstart']
+        ) / _extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x.shape)
+        alpha_bar_next = _extract_into_tensor(self.alphas_cumprod_next, t, x.shape)
+
+        # Equation 12. reversed
+        mean_pred = (
+            out['pred_xstart'] * torch.sqrt(alpha_bar_next)
+            + torch.sqrt(1 - alpha_bar_next) * eps
+        )
+
+        return {'sample': mean_pred, 'pred_xstart': out['pred_xstart']}
+
+    def ddim_sample_loop(
+        self,
+        model,
+        shape,
+        noise=None,
+        clip_denoised=True,
+        dynamic_thresholding_p=0.99,
+        dynamic_thresholding_c=1.7,
+        denoised_fn=None,
+        model_kwargs=None,
+        device=None,
+        progress=False,
+        eta=0.0,
+        sample_fn=None,
+    ):
+        """
+        Generate samples from the model using DDIM.
+        Same usage as p_sample_loop().
+        """
+        final = None
+        for step_idx, sample in enumerate(self.ddim_sample_loop_progressive(
+            model,
+            shape,
+            noise=noise,
+            clip_denoised=clip_denoised,
+            denoised_fn=denoised_fn,
+            dynamic_thresholding_p=dynamic_thresholding_p,
+            dynamic_thresholding_c=dynamic_thresholding_c,
+            model_kwargs=model_kwargs,
+            device=device,
+            progress=progress,
+            eta=eta,
+        )):
+            if sample_fn is not None:
+                sample = sample_fn(step_idx, sample)
+            final = sample
+        return final['sample']
+
+    def ddim_sample_loop_progressive(
+        self,
+        model,
+        shape,
+        noise=None,
+        clip_denoised=True,
+        dynamic_thresholding_p=0.99,
+        dynamic_thresholding_c=1.7,
+        denoised_fn=None,
+        model_kwargs=None,
+        device=None,
+        progress=False,
+        eta=0.0,
+    ):
+        """
+        Use DDIM to sample from the model and yield intermediate samples from
+        each timestep of DDIM.
+        Same usage as p_sample_loop_progressive().
+        """
+        if device is None:
+            device = self.device
+        assert isinstance(shape, (tuple, list))
+        if noise is not None:
+            img = noise
+        else:
+            img = torch.randn(*shape, device=device)
+        indices = list(range(self.num_timesteps))[::-1]
+
+        if progress:
+            # Lazy import so that we don't depend on tqdm.
+            from tqdm.auto import tqdm
+
+            indices = tqdm(indices)
+
+        for i in indices:
+            t = torch.tensor([i] * shape[0], device=device)
+            with torch.no_grad():
+                out = self.ddim_sample(
+                    model,
+                    img,
+                    t,
+                    clip_denoised=clip_denoised,
+                    dynamic_thresholding_p=dynamic_thresholding_p,
+                    dynamic_thresholding_c=dynamic_thresholding_c,
+                    denoised_fn=denoised_fn,
+                    model_kwargs=model_kwargs,
+                    eta=eta,
+                )
+                yield out
+                img = out['sample']
+    
+    def _set_diffusion(self, timesteps: Optional[List[int]] = None, betas: Optional[List[float]] = None):
+        if timesteps is None:
+            return
+        
+        if betas is None:
+            betas = self.betas
+        else:
+            self._set_betas(np.array(betas, dtype=np.float64))
+            self.setup_diffusion_constants(self.betas)
+        
+        last_alpha_cumprod = 1.0
+        new_betas = []
+        timestep_map = []
+        for i, alpha_cumprod in enumerate(self.alphas_cumprod):
+            if i in timesteps:
+                new_betas.append(1 - alpha_cumprod / last_alpha_cumprod)
+                last_alpha_cumprod = alpha_cumprod
+                timestep_map.append(i)
+        
+        self._set_betas(np.array(new_betas, dtype=np.float64))
+        self.timestep_map = timestep_map
+        self.setup_diffusion_constants(self.betas)
+    
     def generate(self, prompt, batch_size=1,
-                h=512, w=512, T=50, gs=7.5, seed=0,
+                h=64, w=64, T=50, gs=7.5, seed=0,
+                sample_timestep_respacing='smart185',
+                use_ddim: bool = False,
+                positive_mixer=0.25,
+                batch_repeat=1,
                 silent=False):
-        raise NotImplementedError()
+        # TODO: Check for other stages. Get_img_size for low res, Variables like sample_timestep_respacing, positive_mixer change!
+        timesteps = self.respacing_modes.get(sample_timestep_respacing, [1000])
+        self._set_diffusion(space_timesteps(1000, timesteps))
+        
+        bs_scale = 2
+        def model_fn(x_t, ts, **kwargs):
+            half = x_t[: len(x_t) // bs_scale]
+            combined = torch.cat([half]*bs_scale, dim=0)
+            model_out = self.unet(combined, ts, **kwargs).sample
+            eps, rest = model_out[:, :3], model_out[:, 3:]
+            if bs_scale == 3:
+                cond_eps, pos_cond_eps, uncond_eps = torch.split(eps, len(eps) // bs_scale, dim=0)
+                half_eps = uncond_eps + gs * (
+                    cond_eps * (1 - positive_mixer) + pos_cond_eps * positive_mixer - uncond_eps)
+                pos_half_eps = uncond_eps + gs * (pos_cond_eps - uncond_eps)
+                eps = torch.cat([half_eps, pos_half_eps, half_eps], dim=0)
+            else:
+                cond_eps, uncond_eps = torch.split(eps, len(eps) // bs_scale, dim=0)
+                half_eps = uncond_eps + gs * (cond_eps - uncond_eps)
+                eps = torch.cat([half_eps, half_eps], dim=0)
+            return torch.cat([eps, rest], dim=1)
+
+        seed = seed_everything(seed)
+        text_emb = self.get_text_embeddings(prompt).to(self.device, dtype=self.unet.dtype).repeat(batch_size, 1, 1)
+        batch_size = text_emb.shape[0] * batch_repeat
+        encoder_hidden_states = torch.cat([text_emb, 
+                                           self.encoder_hidden_states_UC.repeat(batch_size, 1, 1)],
+                                          axis=0)
+        model_kwargs = dict(
+            encoder_hidden_states=encoder_hidden_states,
+        )
+        noise = torch.randn(
+                (batch_size * bs_scale, 3, h, w), device=self.device, dtype=self.unet.dtype)
+        
+        if use_ddim:
+            sample = self.ddim_sample_loop(model_fn, 
+                                            (batch_size * bs_scale, 3, h, w), 
+                                            noise,
+                                            clip_denoise=True,
+                                            sample_fn=None,
+                                            dynamic_thresholding_p=0.95,
+                                            dynamic_thresholding_c=1.5,
+                                            model_kwargs=model_kwargs,
+                                            progress=not silent,
+                                            device=self.device)[:batch_size]
+        else:
+            sample = self.p_sample_loop(model_fn, 
+                                            (batch_size * bs_scale, 3, h, w), 
+                                            noise, 
+                                            clip_denoised=True,
+                                            sample_fn=None,
+                                            dynamic_thresholding_p=0.95,
+                                            dynamic_thresholding_c=0.95,
+                                            model_kwargs=model_kwargs,
+                                            progress=not silent,
+                                            device=self.device)[:batch_size]
+        #TODO: validate?
+        image = (0.5 * sample + 0.5).clamp(0, 1)
+        image = image.detach().cpu().permute(0, 2, 3, 1).float().numpy()
+        image = (image * 255).round().astype("uint8")
+        image = [Image.fromarray(im) for im in image]
+        return image
 
 def create_df_model(**kwargs):
     return DFModel(**kwargs)
 
+
+def space_timesteps(num_timesteps, section_counts):
+    """
+    Create a list of timesteps to use from an original diffusion process,
+    given the number of timesteps we want to take from equally-sized portions
+    of the original process.
+    For example, if there's 300 timesteps and the section counts are [10,15,20]
+    then the first 100 timesteps are strided to be 10 timesteps, the second 100
+    are strided to be 15 timesteps, and the final 100 are strided to be 20.
+    If the stride is a string starting with "ddim", then the fixed striding
+    from the DDIM paper is used, and only one section is allowed.
+    :param num_timesteps: the number of diffusion steps in the original
+                          process to divide up.
+    :param section_counts: either a list of numbers, or a string containing
+                           comma-separated numbers, indicating the step count
+                           per section. As a special case, use "ddimN" where N
+                           is a number of steps to use the striding from the
+                           DDIM paper.
+    :return: a set of diffusion steps from the original process to use.
+    """
+    if isinstance(section_counts, str):
+        if section_counts.startswith('ddim'):
+            desired_count = int(section_counts[len('ddim'):])
+            for i in range(1, num_timesteps):
+                if len(range(0, num_timesteps, i)) == desired_count:
+                    return set(range(0, num_timesteps, i))
+            raise ValueError(
+                f'cannot create exactly {num_timesteps} steps with an integer stride'
+            )
+        elif section_counts == 'fast27':
+            steps = space_timesteps(num_timesteps, '10,10,3,2,2')
+            # Help reduce DDIM artifacts from noisiest timesteps.
+            steps.remove(num_timesteps - 1)
+            steps.add(num_timesteps - 3)
+            return steps
+        section_counts = [int(x) for x in section_counts.split(',')]
+    size_per = num_timesteps // len(section_counts)
+    extra = num_timesteps % len(section_counts)
+    start_idx = 0
+    all_steps = []
+    for i, section_count in enumerate(section_counts):
+        size = size_per + (1 if i < extra else 0)
+        if size < section_count:
+            raise ValueError(
+                f'cannot divide section of {size} steps into {section_count}'
+            )
+        if section_count <= 1:
+            frac_stride = 1
+        else:
+            frac_stride = (size - 1) / (section_count - 1)
+        cur_idx = 0.0
+        taken_steps = []
+        for _ in range(section_count):
+            taken_steps.append(start_idx + round(cur_idx))
+            cur_idx += frac_stride
+        all_steps += taken_steps
+        start_idx += size
+    return set(all_steps)
 
 def _extract_into_tensor(arr, timesteps, broadcast_shape):
     """
