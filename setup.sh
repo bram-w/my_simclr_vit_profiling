@@ -12,6 +12,7 @@ pip install git+https://github.com/openai/CLIP.git
 pip install torchmetrics
 pip install open_clip_torch
 pip install pycocotools
+pip install smart_open
 # pip install google-cloud-storage
 # pip install -r requirements.txt
 

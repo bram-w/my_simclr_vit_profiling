@@ -111,7 +111,7 @@ def load_training_data():
             return [None] * train_dataset_len, train_loader, train_sampler
         else:
             from fake_data import fake_data
-            return [None] * train_dataset_len, fake_data(train_dataset_len, local_batch_size, str_cond=True), None
+            return [None] * train_dataset_len, fake_data(train_dataset_len, local_batch_size, image_dim=cfg.image_dim, str_cond=True), None
     master_print(f"loading images from : {cfg.data_dir}")
     tokenizer = transformers.CLIPTokenizer.from_pretrained(
         cfg.model_name, subfolder="tokenizer", revision=None
@@ -212,8 +212,9 @@ def train():
                    num_chain_timesteps=cfg.num_chain_timesteps,
                    cond_dropout=cfg.cond_dropout,
                    pretrained_unet=cfg.pretrained_unet,
-                    lora=cfg.lora,
-                   pixel_space=cfg.pixel_space
+                    dit=cfg.dit,
+                   pixel_space=cfg.pixel_space,
+                   image_dim=cfg.image_dim
                    )
    #  model = SDModel(cond_dropout=cfg.cond_dropout,
    #                 pretrained_unet=cfg.pretrained_unet)
@@ -396,7 +397,7 @@ def train():
         for step, (img, txt) in enumerate(train_loader):
             # forward pass
             with torch.cuda.amp.autocast(enabled=scaler is not None):
-                loss = model(img, txt, print_unweighted_loss=cfg.print_unweighted_loss)
+                loss = model(img, txt, print_unweighted_loss=cfg.print_unweighted_loss, device=device)
                 loss = loss / cfg.accumulate_grad_iter
             # backward pass
             if scaler is not None:

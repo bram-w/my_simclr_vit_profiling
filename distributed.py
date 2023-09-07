@@ -12,6 +12,7 @@ from io import BytesIO
 from google.cloud import storage
 try:
     import torch_xla.core.xla_model as xm
+    from torch_xla.utils.serialization import _rewrite_data, _get_tensors_folder
 except ImportError:
     xm = None
 
@@ -374,7 +375,6 @@ def orig_xla_save(data, file_or_path, master_only=True, global_master=False):
     print("Did rendezvous", flush=True)
 
 
-from torch_xla.utils.serialization import _rewrite_data, _get_tensors_folder
 def orig_xser_save(data, path, master_only=True, global_master=False):
     print("Determining should_Write", flush=True)
     should_write_data = not master_only or xm.is_master_ordinal(

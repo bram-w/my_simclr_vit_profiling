@@ -25,51 +25,9 @@ import transformers
 from tqdm import tqdm
 # import clip
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDPMScheduler, DDIMScheduler
-from diffusers.models.cross_attention import LoRACrossAttnProcessor
 from aesthetic_model import AestheticScorer
 
-# from diffusers.loaders import AttnProcsLayers
-
-class AttnProcsLayers(torch.nn.Module):
-    def __init__(self, state_dict):
-        super().__init__()
-        self.layers = torch.nn.ModuleList(state_dict.values())
-        self.mapping = dict(enumerate(state_dict.keys()))
-        self.rev_mapping = {v: k for k, v in enumerate(state_dict.keys())}
-
-        # we add a hook to state_dict() and load_state_dict() so that the
-        # naming fits with `unet.attn_processors`
-        def map_to(module, state_dict, *args, **kwargs):
-            new_state_dict = {}
-            
-            # print(state_dict)
-            # print(module.mapping)
-            for key, value in state_dict.items():
-                # print(key)
-                if 'lora_layers' in key: # new
-                    num = int(key.split(".")[3 if 'module' in key else 2])  # start is now "lora_layers.layers"
-                    # num = int(key.split(".")[1])  # 0 is always "layers"
-                    new_key = key.replace(f"lora_layers.layers.{num}", "unet." + module.mapping[num])
-                    # new_key = key.replace(f"layers.{num}", module.mapping[num])
-                else:
-                    new_key = key
-                new_state_dict[new_key] = value
-
-            return new_state_dict
-
-        def map_from(module, state_dict, *args, **kwargs):
-            all_keys = list(state_dict.keys())
-            for key in all_keys:
-                if 'processor' not in key: continue
-                replace_key = key.split(".processor")[0] + ".processor"
-                # mine has extra "unet" prepended from what this wants
-                replace_key = replace_key.replace("unet.", "")
-                new_key = key.replace(replace_key, f"layers.{module.rev_mapping[replace_key]}")
-                state_dict[new_key] = state_dict[key]
-                del state_dict[key]
-
-        self._register_state_dict_hook(map_to)
-        self._register_load_state_dict_pre_hook(map_from, with_module=True)
+import dit_model
 
 
 class CLIPWeighting(nn.Module):
@@ -145,7 +103,9 @@ class SDModel(nn.Module):
                  lora=False,
                  cond_dropout=0.1,
                  weighting_module=None, # For reward training
-                 pixel_space=False
+                 pixel_space=False,
+                 dit=False,
+                 image_dim=32 # cfg.image_dim // 8
                 ):
         super().__init__()
         
@@ -155,7 +115,8 @@ class SDModel(nn.Module):
         self.text_encoder = slip_models.CLIPTextPretrained()
         self.weighting_module = weighting_module
         self.text_encoder.requires_grad_(False)
-        
+        self.dit = dit
+
         if not pixel_space:
             self.vae = AutoencoderKL.from_pretrained(model_config_name, 
                                                 subfolder="vae")
@@ -164,37 +125,31 @@ class SDModel(nn.Module):
         if self.weighting_module is not None:
             self.weighting_module.requires_grad_(False)
 
-        if pretrained_unet:
-            assert not pixel_space
-            self.unet = UNet2DConditionModel.from_pretrained(model_config_name,
-                                                             subfolder='unet')
+        if not dit:
+            if pretrained_unet:
+                assert not pixel_space
+                self.unet = UNet2DConditionModel.from_pretrained(model_config_name,
+                                                                 subfolder='unet')
+            else:
+                unet_cfg = UNet2DConditionModel.load_config(model_config_name,
+                                                            subfolder="unet")
+                if pixel_space:
+                    unet_cfg['in_channels'] = 3
+                    unet_cfg['out_channels'] = 3
+                self.unet = UNet2DConditionModel.from_config(unet_cfg)
         else:
-            unet_cfg = UNet2DConditionModel.load_config(model_config_name,
-                                                        subfolder="unet")
-            if pixel_space:
-                unet_cfg['in_channels'] = 3
-                unet_cfg['out_channels'] = 3
-            self.unet = UNet2DConditionModel.from_config(unet_cfg)
+            assert not pretrained_unet
+            assert not pixel_space
+            print("Just using class-conditional as unconditional")
+            if dit in dit_model.DiT_models:
+                dit_class = eval(f'dit_model.{dit}')
+            else:
+                dit_class = dit_model.DiT_L_2
+            self.unet = dit_class(input_size=image_dim//8, learn_sigma=False)
+            print("Not sure how to set device, doing manually")
+            self.unet.device = 'cuda'
         if lora:
-            self.unet.requires_grad_(False)
-            lora_attn_procs = {}
-            for name in self.unet.attn_processors.keys():
-                cross_attention_dim = None if name.endswith("attn1.processor") else self.unet.config.cross_attention_dim
-                if name.startswith("mid_block"):
-                    hidden_size = self.unet.config.block_out_channels[-1]
-                elif name.startswith("up_blocks"):
-                    block_id = int(name[len("up_blocks.")])
-                    hidden_size = list(reversed(self.unet.config.block_out_channels))[block_id]
-                elif name.startswith("down_blocks"):
-                    block_id = int(name[len("down_blocks.")])
-                    hidden_size = self.unet.config.block_out_channels[block_id]
-
-                lora_attn_procs[name] = LoRACrossAttnProcessor(
-                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim
-                )   
-
-            self.unet.set_attn_processor(lora_attn_procs)
-            self.lora_layers = AttnProcsLayers(self.unet.attn_processors)
+            raise NotImplementedError
         # Switched to DDIM scheduler. The add_noise and num_train_timesteps are the same
         # so only difference is scheduler stepping (which we always DDIM for)
         self.scheduler = DDIMScheduler.from_pretrained(model_config_name,
@@ -255,11 +210,12 @@ class SDModel(nn.Module):
             raise NotImplementedError
         return weights
 
-    def forward(self, img, txt, timesteps=None, print_unweighted_loss=False):
+    def forward(self, img, txt, timesteps=None, print_unweighted_loss=False, device=None):
         # Maybe could check if above is initialized but avoiding if/else
         # print(img)
         # print(txt)
         # print(img.device)
+        if device is None: device = self.unet.device
         with torch.no_grad():
             # loss_weights = self.weighting_module(img, txt)
             loss_weights = self.weighting({"img":img, "txt":txt})
@@ -268,7 +224,7 @@ class SDModel(nn.Module):
                                           padding="max_length",
                                           max_length=self.tokenizer.model_max_length,
                                           truncation=True,
-                                          return_tensors='pt').input_ids.to(self.unet.device)
+                                          return_tensors='pt').input_ids.to(device)
             encoder_hidden_states = self.text_encoder(tokenized_txt)
             # Do dropout to null conditioning
             lbs = encoder_hidden_states.size(0)
@@ -295,10 +251,13 @@ class SDModel(nn.Module):
                                           device=latents.device)
                 timesteps = timesteps.long()
             noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
-
-        noise_pred = self.unet(noisy_latents,
-                          timesteps, 
-                         encoder_hidden_states=encoder_hidden_states).sample
+        if self.dit:
+            # TODO: Integrate into one call
+            noise_pred = self.unet(noisy_latents, timesteps, torch.ones_like(timesteps))
+        else:
+            noise_pred = self.unet(noisy_latents,
+                              timesteps, 
+                             encoder_hidden_states=encoder_hidden_states).sample
 
         per_element_mses = (noise - noise_pred) ** 2
         loss = (loss_weights.view(-1, 1, 1, 1) * per_element_mses).mean() # equivalent to below but admits weighting
